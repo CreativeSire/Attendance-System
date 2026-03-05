@@ -230,6 +230,17 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Serve frontend static files
+const path = require('path');
+app.use(express.static(path.join(__dirname, '../../app/dist')));
+
+// Serve index.html for all non-API routes (React Router support)
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api') && !req.path.startsWith('/health')) {
+    res.sendFile(path.join(__dirname, '../../app/dist/index.html'));
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
