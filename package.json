@@ -1,0 +1,15 @@
+{
+  "name": "dala-attendance-monorepo",
+  "private": true,
+  "workspaces": [
+    "extracted/app",
+    "extracted/server"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "dev:app": "npm run dev --workspace=extracted/app",
+    "dev:server": "npm run dev --workspace=extracted/server",
+    "build:app": "npm run build --workspace=extracted/app",
+    "start:server": "npm run start --workspace=extracted/server"
+  }
+}
