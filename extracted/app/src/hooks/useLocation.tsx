@@ -82,6 +82,7 @@ export function useLocation() {
       setState(prev => ({ ...prev, loading: true, error: null }));
 
       navigator.geolocation.getCurrentPosition(
+        (position) => {
           const location: Location = {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
