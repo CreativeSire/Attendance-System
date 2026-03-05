@@ -6,23 +6,21 @@ import { useQRCodeGenerator } from '@/hooks/useQRCode';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Clock,
   MapPin,
   LogOut,
-  User,
   TrendingUp,
-  AlertTriangle,
-  CheckCircle2,
   Briefcase,
   DollarSign,
   Settings,
   Menu,
   X,
-  ChevronRight,
   Home,
   Receipt,
-  Navigation
+  QrCode,
+  Smile
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ClockInOut } from './ClockInOut';
@@ -32,10 +30,11 @@ import { LeaveManagement } from './LeaveManagement';
 import { PayrollExport } from './PayrollExport';
 import { BulkAdminActions } from './BulkAdminActions';
 import { LiveFeed } from './LiveFeed';
+import { ExpenseManagement } from './ExpenseManagement';
 import { cn } from '@/lib/utils';
 
 export function Dashboard() {
-  const { user, logout, hasRole, employees } = useAuth();
+  const { user, logout, hasRole } = useAuth();
   const attendance = useAttendance();
   const location = useLocation();
   const qrState = useQRCodeGenerator(user?.officeLocation || { lat: 6.5244, lng: 3.3792 }, 5);
@@ -63,6 +62,7 @@ export function Dashboard() {
   };
 
   const todayRecords = attendance.getAllRecords(format(new Date(), 'yyyy-MM-dd'));
+
   const happyCount = todayRecords.filter((r: any) => r.mood === 'happy').length;
   const stressedCount = todayRecords.filter((r: any) => ['sad', 'angry', 'fearful'].includes(r.mood || '')).length;
   const neutralCount = todayRecords.length - happyCount - stressedCount;

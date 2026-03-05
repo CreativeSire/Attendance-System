@@ -3,10 +3,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Receipt, Check, X, Clock } from 'lucide-react';
+import { Plus, Check, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AttendanceHook } from '@/hooks/useAttendance';
 
@@ -24,9 +25,9 @@ export function ExpenseManagement({ attendance }: ExpenseManagementProps) {
 
   const isAdmin = hasRole(['admin', 'manager']);
 
-  const handleAddExpense = () => {
+  const handleAddExpense = async () => {
     if (!user || !amount || !reason) return;
-    const result = attendance.addExpense({
+    const result = await attendance.addExpense({
       userId: user.id,
       userName: user.name,
       date: new Date().toISOString().split('T')[0],

@@ -4,17 +4,14 @@ import { useToast } from '@/hooks/useToast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Clock, 
-  MapPin, 
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Clock,
   QrCode,
   Scan,
-  CheckCircle2,
   Loader2,
   Navigation,
   LocateFixed,
-  Camera,
   X,
   ShieldCheck,
   AlertTriangle,
@@ -58,6 +55,61 @@ export function ClockInOut({ attendance, location, todayRecord, verifyQRCode }: 
 
   const isClockedIn = !!todayRecord?.clockIn && !todayRecord?.clockOut;
   const isClockedOut = !!todayRecord?.clockOut;
+
+  const fmtTime = (isoString: string): string => {
+    const d = new Date(isoString);
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  };
+
+  const stopQRScan = useCallback(() => {
+    if (qrRef.current) {
+      qrRef.current.stop().catch(() => {});
+      qrRef.current = null;
+    }
+  }, []);
+
+  const handleGetLocation = useCallback(async () => {
+    setGpsStatus('loading');
+    try {
+      const loc = await location.getCurrentLocation();
+      setUserLocation({ lat: loc.lat, lng: loc.lng });
+      if (user?.officeLocation) {
+        const dist = Math.round(location.calculateDistance(loc.lat, loc.lng, user.officeLocation.lat, user.officeLocation.lng));
+        setDistance(dist);
+      }
+      setGpsStatus('success');
+    } catch {
+      setGpsStatus('error');
+    }
+  }, [location, user]);
+
+  const startGPSClock = useCallback(async () => {
+    if (!userLocation) {
+      await handleGetLocation();
+    }
+    setStep('capturing-face');
+  }, [userLocation, handleGetLocation]);
+
+  const startQRScan = useCallback(() => {
+    setStep('scanning-qr');
+    setTimeout(() => {
+      const qr = new Html5Qrcode('qr-reader');
+      qrRef.current = qr;
+      qr.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: 250 },
+        (decodedText) => {
+          if (verifyQRCode(decodedText)) {
+            stopQRScan();
+            setStep('capturing-face');
+          } else {
+            toast('Invalid QR Code. Try again.', 'error');
+          }
+        },
+        () => {}
+      );
+    }, 500);
+  }, [verifyQRCode, stopQRScan, toast]);
 
   // Load Face API Models
   useEffect(() => {
@@ -196,16 +248,16 @@ export function ClockInOut({ attendance, location, todayRecord, verifyQRCode }: 
 
       // Finalize Clock In/Out
       if (!isClockedIn) {
-        const result = attendance.clockIn(user.id, user.name, userLocation, activeMethod, photo, detectedMood || 'neutral', finalReason);
+        const result = await attendance.clockIn(user.id, user.name, userLocation, activeMethod, photo, detectedMood || 'neutral', finalReason);
         if (result.success) {
-          toast(result.offline ? '📡 Saved offline.' : '✅ Verification Successful!', 'success');
+          toast('✅ Verification Successful!', 'success');
         } else {
           toast(result.error || 'Failed', 'error');
         }
       } else {
-        const result = attendance.clockOut(user.id, userLocation, activeMethod, photo);
+        const result = await attendance.clockOut(user.id, userLocation, activeMethod, photo);
         if (result.success) {
-          toast(result.offline ? '📡 Saved offline.' : '✅ Clocked out!', 'success');
+          toast('✅ Clocked out!', 'success');
         }
       }
       setIsNegotiatingLate(false);

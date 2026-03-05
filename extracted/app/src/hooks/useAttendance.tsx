@@ -12,6 +12,8 @@ const LATE_PENALTY_RATE = 0.1; // 10% of daily rate per late day
 
 const getToday = () => new Date().toISOString().split('T')[0];
 
+export type AttendanceHook = ReturnType<typeof useAttendance>;
+
 export function useAttendance() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
@@ -84,8 +86,8 @@ export function useAttendance() {
       const record = records.find(r => r.userId === userId && r.date === today);
       
       let totalHours = 0;
-      if (record && record.clockInTime) {
-        const [inHour, inMinute] = record.clockInTime.split(':').map(Number);
+      if (record && record.clockIn?.time) {
+        const [inHour, inMinute] = record.clockIn.time.split(':').map(Number);
         const now = new Date();
         const outHour = now.getHours();
         const outMinute = now.getMinutes();
@@ -173,6 +175,27 @@ export function useAttendance() {
     return records.find(r => r.userId === userId && r.date === today);
   }, [records]);
 
+  const getAllRecords = useCallback((date: string): AttendanceRecord[] => {
+    return records.filter(r => r.date === date);
+  }, [records]);
+
+  const approveExpense = useCallback(async (expenseId: string, approvedBy: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/expenses/${expenseId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvedBy })
+      });
+      if (res.ok) {
+        setExpenses(prev => prev.map(e => e.id === expenseId ? { ...e, status: 'approved' as const, approvedBy } : e));
+        return { success: true };
+      }
+      return { success: false };
+    } catch (err) {
+      return { success: false };
+    }
+  }, []);
+
   const calculatePayroll = useCallback((userId: string, monthlySalary: number, period: string) => {
     const userRecords = records.filter(r => r.userId === userId && r.date.startsWith(period));
     const userExpenses = expenses.filter(e => e.userId === userId && e.status === 'approved' && e.date.startsWith(period));
@@ -227,6 +250,8 @@ export function useAttendance() {
     addBroadcast,
     deleteBroadcast,
     getTodayRecord,
+    getAllRecords,
+    approveExpense,
     calculatePayroll,
     fmtNaira,
     loading
