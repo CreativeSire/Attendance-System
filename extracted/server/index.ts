@@ -6,7 +6,8 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const prisma = new PrismaClient();
+let prisma = null;
+try { prisma = new PrismaClient(); } catch(err) { console.error("DB init failed:", err.message); }
 const app = express();
 const PORT = process.env.PORT || 3001;
 
