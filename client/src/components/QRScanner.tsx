@@ -14,6 +14,10 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
   const [started, setStarted] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const userAgent = typeof window !== 'undefined' ? window.navigator.userAgent : '';
+  const isIPhone = /iPhone/i.test(userAgent);
+  const isIPad = /iPad/i.test(userAgent) || (/Macintosh/i.test(userAgent) && 'ontouchend' in window);
+  const isIOS = isIPhone || isIPad;
 
   useEffect(() => {
     return () => {
@@ -156,8 +160,26 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
             )}
           </Button>
           {cameraError && (
-            <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger text-left">
-              {cameraError}
+            <div className="space-y-3">
+              <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger text-left">
+                {cameraError}
+              </div>
+              <div className="rounded-lg border border-border bg-surface p-4 text-left space-y-2">
+                <p className="text-white text-sm font-medium">How to allow camera access</p>
+                {isIOS ? (
+                  <div className="text-sm text-gray-400 space-y-1">
+                    <p>1. Tap the camera icon or site settings icon in Safari&apos;s address bar.</p>
+                    <p>2. Set Camera to <span className="text-white">Allow</span>.</p>
+                    <p>3. Reload the page, then tap <span className="text-white">Open camera to scan QR</span> again.</p>
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-400 space-y-1">
+                    <p>1. Click the camera icon in your browser&apos;s address bar.</p>
+                    <p>2. Change camera permission for this site to <span className="text-white">Allow</span>.</p>
+                    <p>3. Refresh the page, then tap <span className="text-white">Open camera to scan QR</span> again.</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
