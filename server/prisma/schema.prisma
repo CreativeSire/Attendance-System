@@ -1,0 +1,297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  manager
+  employee
+}
+
+enum AttendanceStatus {
+  present
+  late
+  absent
+  wfh
+  field
+}
+
+enum LeaveType {
+  Annual
+  Sick
+  Casual
+  Study
+  Unpaid
+}
+
+enum RequestStatus {
+  pending
+  approved
+  rejected
+}
+
+enum WorkMode {
+  office
+  wfh
+  field
+  client_site
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  password      String
+  role          Role     @default(employee)
+  department    String?
+  employeeId    String   @unique
+  position      String?
+  hourlyRate    Float    @default(0)
+  basicSalary   Float    @default(0)
+  masterPhoto   String?
+  phone         String?
+  startDate     DateTime @default(now())
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  attendance    AttendanceRecord[]
+  leaves        LeaveRequest[]
+  expenses      ExpenseRequest[]
+  bddCheckins   BDDCheckIn[]
+  goals         PerformanceGoal[]
+  notifications Notification[]
+  refreshTokens RefreshToken[]
+}
+
+model OfficeLocation {
+  id           String   @id @default(cuid())
+  name         String
+  address      String
+  latitude     Float
+  longitude    Float
+  radiusMeters Int      @default(75)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model AppConfig {
+  id                  String   @id
+  workStartTime       String   @default("09:00")
+  gracePeriodMinutes  Int      @default(10)
+  qrExpirySeconds     Int      @default(180)
+  requireLocation     Boolean  @default(true)
+  requireFaceCapture  Boolean  @default(true)
+  requireLiveness     Boolean  @default(true)
+  defaultOfficeId     String?
+  latePenaltyMode     String   @default("track_only")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorName  String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model QRToken {
+  id             String    @id @default(cuid())
+  token          String    @unique
+  entryPointId   String
+  entryPointName String
+  expiresAt      DateTime
+  usedAt         DateTime?
+  usedBy         String?
+  createdAt      DateTime  @default(now())
+}
+
+model AttendanceRecord {
+  id             String           @id @default(cuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id])
+  date           String
+  clockInTime    DateTime?
+  clockOutTime   DateTime?
+  clockInPhoto   String?
+  clockOutPhoto  String?
+  clockInMethod  String?
+  clockOutMethod String?
+  clockInLat     Float?
+  clockInLng     Float?
+  clockInAccuracy Float?
+  clockOutLat    Float?
+  clockOutLng    Float?
+  clockOutAccuracy Float?
+  locationStatus String?
+  distanceFromOffice Float?
+  status         AttendanceStatus @default(present)
+  workMode       WorkMode         @default(office)
+  totalHours     Float?
+  isLate         Boolean          @default(false)
+  lateMinutes    Int              @default(0)
+  lateReason     String?
+  overtimeHours  Float            @default(0)
+  mood           String?
+  entryPoint     String?
+  approvedBy     String?
+  notes          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  correction CorrectionRequest?
+}
+
+model CorrectionRequest {
+  id          String           @id @default(cuid())
+  recordId    String           @unique
+  record      AttendanceRecord @relation(fields: [recordId], references: [id])
+  requestedBy String
+  reason      String
+  newClockIn  String?
+  newClockOut String?
+  status      RequestStatus    @default(pending)
+  reviewedBy  String?
+  reviewNote  String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model BDDCheckIn {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  date     String
+  dayOfWeek  String
+  weekNumber Int
+  year       Int
+
+  // Monday fields
+  weeklyGoal             String?
+  lastWeekAccomplishment String?
+  foreseenChallenges     String?
+  supportNeeded          String?
+  seMeetingFeedback      String?
+
+  // Daily fields
+  priorityOne        String?
+  priorityTwo        String?
+  priorityThree      String?
+  completedYesterday String?
+  blockers           String?
+  progressPercent    Int?
+  questionsNotes     String?
+
+  // Saturday fields
+  goalAchieved      String?
+  keyWins           String?
+  aiUsageThisWeek   String?
+  wouldDoDifferently String?
+
+  aiSummary   String?
+  submittedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+model LeaveRequest {
+  id         String        @id @default(cuid())
+  userId     String
+  user       User          @relation(fields: [userId], references: [id])
+  type       LeaveType
+  startDate  String
+  endDate    String
+  days       Int
+  reason     String
+  status     RequestStatus @default(pending)
+  approvedBy String?
+  approvedAt DateTime?
+  reviewNote String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+}
+
+model ExpenseRequest {
+  id          String        @id @default(cuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
+  title       String
+  amount      Float
+  category    String
+  date        String
+  description String
+  receipt     String?
+  status      RequestStatus @default(pending)
+  approvedBy  String?
+  approvedAt  DateTime?
+  reviewNote  String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model PerformanceGoal {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  quarter        Int
+  year           Int
+  objective      String
+  keyResultOne   String?
+  keyResultTwo   String?
+  keyResultThree String?
+  progressPercent Int     @default(0)
+  managerNotes   String?
+  status         String   @default("active")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  message   String
+  type      String
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+}
+
+model BroadcastMessage {
+  id         String    @id @default(cuid())
+  senderName String
+  senderId   String
+  title      String
+  message    String
+  department String?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model EntryPoint {
+  id        String   @id @default(cuid())
+  name      String
+  location  String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}

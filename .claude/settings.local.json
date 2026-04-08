@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''C:\\\\Users\\\\HomePC\\\\Desktop\\\\Dala Attendace'' -Force | Select-Object Name, PSIsContainer\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''C:\\\\Users\\\\HomePC\\\\Desktop\\\\Dala Attendace\\\\.claude\\\\worktrees\\\\beautiful-bhaskara'' -Force | Select-Object Name, PSIsContainer\")",
+      "Bash(powershell -Command \":*)",
+      "Bash(pip show:*)"
+    ]
+  }
+}

@@ -1,7 +1,0 @@
-# Node
-node_modules
-dist
-.env
-
-# Trigger.dev
-.trigger
