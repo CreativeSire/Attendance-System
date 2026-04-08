@@ -19,6 +19,16 @@ function shouldIgnoreScanError(error: string): boolean {
   );
 }
 
+function pickPreferredCamera(cameras: Array<{ id: string; label: string }>) {
+  if (cameras.length === 0) return null;
+
+  const preferred = cameras.find((camera) =>
+    /(back|rear|environment|traseira|trasera)/i.test(camera.label)
+  );
+
+  return preferred ?? cameras[cameras.length - 1];
+}
+
 export default function QRScanner({ onScan, onError }: QRScannerProps) {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const divId = 'qr-scanner-div';
@@ -43,6 +53,48 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     };
   }, [manualMode]);
 
+  const handleSuccessfulScan = async (scanner: Html5Qrcode, text: string) => {
+    setStarted(false);
+    await scanner.stop().catch(() => {});
+    scanner.clear();
+    scannerRef.current = null;
+    onScan(text);
+  };
+
+  const startWithCameraId = async (scanner: Html5Qrcode, cameraId: string) => {
+    await scanner.start(
+      cameraId,
+      {
+        fps: 10,
+        qrbox: { width: 240, height: 240 },
+        aspectRatio: 1,
+      },
+      async (text) => {
+        await handleSuccessfulScan(scanner, text);
+      },
+      (err) => {
+        if (onError && !shouldIgnoreScanError(err)) onError(err);
+      }
+    );
+  };
+
+  const startWithFacingMode = async (scanner: Html5Qrcode, facingMode: 'environment' | 'user') => {
+    await scanner.start(
+      { facingMode },
+      {
+        fps: 10,
+        qrbox: { width: 240, height: 240 },
+        aspectRatio: 1,
+      },
+      async (text) => {
+        await handleSuccessfulScan(scanner, text);
+      },
+      (err) => {
+        if (onError && !shouldIgnoreScanError(err)) onError(err);
+      }
+    );
+  };
+
   const startScanner = async () => {
     if (starting || started || manualMode) return;
     setCameraError(null);
@@ -51,25 +103,14 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     try {
       const scanner = new Html5Qrcode(divId, { verbose: false });
       scannerRef.current = scanner;
+      const cameras = await Html5Qrcode.getCameras();
+      const preferredCamera = pickPreferredCamera(cameras);
 
-      await scanner.start(
-        { facingMode: { exact: 'environment' } },
-        {
-          fps: 10,
-          qrbox: { width: 240, height: 240 },
-          aspectRatio: 1,
-        },
-        async (text) => {
-          setStarted(false);
-          await scanner.stop().catch(() => {});
-          scanner.clear();
-          scannerRef.current = null;
-          onScan(text);
-        },
-        (err) => {
-          if (onError && !shouldIgnoreScanError(err)) onError(err);
-        }
-      );
+      if (preferredCamera) {
+        await startWithCameraId(scanner, preferredCamera.id);
+      } else {
+        await startWithFacingMode(scanner, 'environment');
+      }
 
       setStarted(true);
     } catch (err) {
@@ -77,29 +118,15 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
         ? err.message
         : 'Camera access failed. Please allow camera permission and try again.';
 
-      if (message.toLowerCase().includes('environment')) {
+      if (
+        message.toLowerCase().includes('environment') ||
+        message.toLowerCase().includes('camera') ||
+        message.toLowerCase().includes('device')
+      ) {
         try {
           const scanner = scannerRef.current ?? new Html5Qrcode(divId, { verbose: false });
           scannerRef.current = scanner;
-
-          await scanner.start(
-            { facingMode: 'environment' },
-          {
-            fps: 10,
-            qrbox: { width: 240, height: 240 },
-            aspectRatio: 1,
-          },
-          async (text) => {
-            setStarted(false);
-            await scanner.stop().catch(() => {});
-            scanner.clear();
-            scannerRef.current = null;
-            onScan(text);
-          },
-            (scanErr) => {
-              if (onError && !shouldIgnoreScanError(scanErr)) onError(scanErr);
-            }
-          );
+          await startWithFacingMode(scanner, 'environment');
 
           setStarted(true);
           setStarting(false);
@@ -200,7 +227,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
 
       <div
         id={divId}
-        className={`${started ? 'block' : 'hidden'} min-h-[280px] [&_video]:rounded-xl [&_video]:w-full [&_video]:object-cover`}
+        className={`${started ? 'block' : 'hidden'} min-h-[280px] rounded-xl overflow-hidden bg-black/20 [&_video]:min-h-[280px] [&_video]:rounded-xl [&_video]:w-full [&_video]:object-cover [&_section]:!border-0 [&_section]:!bg-transparent`}
       />
 
       <div className="flex flex-col items-center gap-2">
