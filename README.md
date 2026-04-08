@@ -22,6 +22,11 @@ CLIENT_URL="http://localhost:5173"
 NODE_ENV="development"
 ```
 
+Production note:
+- set unique strong values for `JWT_SECRET` and `JWT_REFRESH_SECRET`
+- do not rely on fallback secrets in production
+- on Railway, point `DATABASE_URL` at the attached Postgres service
+
 ### 2. Install Dependencies
 ```bash
 npm install                              # root
@@ -44,6 +49,14 @@ npm run dev
 # Or individually:
 cd server && npm run dev     # http://localhost:3001
 cd client && npm run dev     # http://localhost:5173
+```
+
+### 5. Production Operations
+```bash
+cd server
+npm run smoke:test          # live API smoke tests
+npm run db:backup           # export a full JSON backup to ../backups/<timestamp>
+npm run db:seed-snapshot    # export a seed snapshot to ../backups/<timestamp>
 ```
 
 ---
@@ -69,6 +82,12 @@ http://localhost:5173/entry/ep-side    ← Side Entrance
 ```
 
 No login required. Shows rotating QR code that refreshes every 3 minutes.
+
+For production door displays:
+- use a dedicated tablet, kiosk browser, or mounted TV browser
+- keep the route in fullscreen mode
+- prefer a stable network connection and external power
+- use `/entry/ep-main` and `/entry/ep-side` directly from the display device
 
 ---
 

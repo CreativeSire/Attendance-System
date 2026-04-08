@@ -35,6 +35,49 @@ async function generateQRForEntryPoint(entryPointId: string, entryPointName: str
   return { ...qrToken, qrDataUrl };
 }
 
+async function getOrCreateActiveQRForEntryPoint(entryPointId: string) {
+  const now = new Date();
+
+  let activeToken = await prisma.qRToken.findFirst({
+    where: {
+      entryPointId,
+      expiresAt: { gt: now },
+      usedAt: null,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (activeToken) {
+    return activeToken;
+  }
+
+  const entryPoint = await prisma.entryPoint.findUnique({
+    where: { id: entryPointId },
+  });
+
+  if (!entryPoint || !entryPoint.isActive) {
+    return null;
+  }
+
+  try {
+    return await generateQRForEntryPoint(entryPointId, entryPoint.name);
+  } catch (error) {
+    const possibleConflict = error as { code?: string };
+    if (possibleConflict.code === 'P2002') {
+      return prisma.qRToken.findFirst({
+        where: {
+          entryPointId,
+          expiresAt: { gt: new Date() },
+          usedAt: null,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    throw error;
+  }
+}
+
 // POST /api/qr/generate
 router.post('/generate', verifyToken, requireRole('admin', 'manager'), async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -100,33 +143,11 @@ router.get('/active', verifyToken, requireRole('admin', 'manager'), async (req: 
 router.get('/entry/:entryPointId', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { entryPointId } = req.params as Record<string, string>;
-    const now = new Date();
+    const activeToken = await getOrCreateActiveQRForEntryPoint(entryPointId);
 
-    // Find active token for this entry point
-    let activeToken = await prisma.qRToken.findFirst({
-      where: {
-        entryPointId,
-        expiresAt: { gt: now },
-        usedAt: null,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    let entryPointName = activeToken?.entryPointName;
-
-    // If no active token, get entry point name and generate new one
     if (!activeToken) {
-      const entryPoint = await prisma.entryPoint.findUnique({
-        where: { id: entryPointId },
-      });
-
-      if (!entryPoint) {
-        res.status(404).json({ success: false, message: 'Entry point not found' });
-        return;
-      }
-
-      entryPointName = entryPoint.name;
-      activeToken = await generateQRForEntryPoint(entryPointId, entryPoint.name);
+      res.status(404).json({ success: false, message: 'Entry point not found' });
+      return;
     }
 
     const qrDataUrl = await QRCode.toDataURL(activeToken.token, {
@@ -135,11 +156,13 @@ router.get('/entry/:entryPointId', async (req: Request, res: Response, next: Nex
       width: 300,
     });
 
+    res.setHeader('Cache-Control', 'no-store');
+
     res.json({
       success: true,
       data: {
         entryPointId,
-        entryPointName,
+        entryPointName: activeToken.entryPointName,
         token: activeToken.token,
         expiresAt: activeToken.expiresAt,
         qrDataUrl,
@@ -319,7 +342,13 @@ export function startQRRefreshJob(): void {
 
         if (!activeToken) {
           // Generate new token
-          const newToken = await generateQRForEntryPoint(ep.id, ep.name);
+          const newToken = await getOrCreateActiveQRForEntryPoint(ep.id);
+          if (!newToken) continue;
+          const qrDataUrl = await QRCode.toDataURL(newToken.token, {
+            errorCorrectionLevel: 'H',
+            margin: 2,
+            width: 300,
+          });
 
           // Emit to entry point subscribers
           try {
@@ -329,7 +358,7 @@ export function startQRRefreshJob(): void {
               entryPointName: ep.name,
               token: newToken.token,
               expiresAt: newToken.expiresAt,
-              qrDataUrl: newToken.qrDataUrl,
+              qrDataUrl,
             });
           } catch {
             // Socket not initialized yet — skip emit

@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Clock, Calendar, ClipboardList, CalendarOff, Receipt, Banknote, TrendingUp, Users, Settings, LogOut, ChevronLeft, Menu } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 
@@ -17,19 +17,48 @@ const navItems = [
   { to: '/admin', icon: Settings, label: 'Admin', roles: ['admin'] },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+}
+
+export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => (typeof window !== 'undefined' ? window.innerWidth >= 1024 : true));
 
-  const handleLogout = async () => { await logout(); navigate('/login'); };
+  useEffect(() => {
+    const onResize = () => setIsDesktop(window.innerWidth >= 1024);
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const handleLogout = async () => {
+    await logout();
+    onCloseMobile?.();
+    navigate('/login');
+  };
   const filtered = navItems.filter(n => user && n.roles.includes(user.role));
 
   return (
-    <aside className={cn(
-      'flex flex-col h-screen bg-surface border-r border-border transition-all duration-300 shrink-0',
-      collapsed ? 'w-16' : 'w-60'
-    )}>
+    <>
+      {!isDesktop && mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation overlay"
+          className="fixed inset-0 z-30 bg-background/80 backdrop-blur-sm lg:hidden"
+          onClick={onCloseMobile}
+        />
+      )}
+      <aside className={cn(
+        'flex flex-col h-screen bg-surface border-r border-border transition-all duration-300 shrink-0',
+        isDesktop
+          ? (collapsed ? 'w-16' : 'w-60')
+          : 'fixed inset-y-0 left-0 z-40 w-72 max-w-[86vw] shadow-2xl',
+        !isDesktop && (mobileOpen ? 'translate-x-0' : '-translate-x-full')
+      )}>
       {/* Logo */}
       <div className="flex items-center justify-between px-4 py-5 border-b border-border">
         {!collapsed && (
@@ -40,9 +69,15 @@ export default function Sidebar() {
             <span className="text-white font-bold text-lg">Dala</span>
           </div>
         )}
-        <button onClick={() => setCollapsed(!collapsed)} className="text-gray-400 hover:text-white transition-colors ml-auto">
-          {collapsed ? <Menu size={18} /> : <ChevronLeft size={18} />}
-        </button>
+        {isDesktop ? (
+          <button onClick={() => setCollapsed(!collapsed)} className="text-gray-400 hover:text-white transition-colors ml-auto">
+            {collapsed ? <Menu size={18} /> : <ChevronLeft size={18} />}
+          </button>
+        ) : (
+          <button onClick={onCloseMobile} className="text-gray-400 hover:text-white transition-colors ml-auto">
+            <ChevronLeft size={18} />
+          </button>
+        )}
       </div>
 
       {/* Nav */}
@@ -53,7 +88,10 @@ export default function Sidebar() {
             isActive
               ? 'bg-accent/20 text-accent border-l-2 border-accent'
               : 'text-gray-400 hover:text-white hover:bg-surface-2'
-          )}>
+          )}
+          onClick={() => {
+            if (!isDesktop) onCloseMobile?.();
+          }}>
             <item.icon size={18} className="shrink-0" />
             {!collapsed && <span>{item.label}</span>}
           </NavLink>
@@ -77,6 +115,7 @@ export default function Sidebar() {
           </button>
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

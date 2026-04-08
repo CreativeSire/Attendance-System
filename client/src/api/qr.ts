@@ -1,12 +1,12 @@
 import { api } from './client';
-import type { QRToken, EntryPoint, ApiResponse } from '@/types';
+import type { QRToken, EntryPoint, EntryQRCode, ApiResponse } from '@/types';
 
 export const qrApi = {
   getEntryQR: (entryPointId: string) =>
-    api.get<ApiResponse<{ token: string; qrDataUrl: string; expiresAt: string }>>(`/qr/entry/${entryPointId}`),
+    api.get<ApiResponse<EntryQRCode>>(`/qr/entry/${entryPointId}`),
 
   getEntryToken: (entryPointId: string) =>
-    api.get<ApiResponse<{ token: string; qrDataUrl: string; expiresAt: string }>>(`/qr/entry/${entryPointId}`),
+    api.get<ApiResponse<EntryQRCode>>(`/qr/entry/${entryPointId}`),
 
   validateToken: (token: string) =>
     api.post<ApiResponse<{ valid: boolean; entryPointId: string; entryPoint: EntryPoint }>>('/qr/validate', { token }),
@@ -24,5 +24,5 @@ export const qrApi = {
     api.del<ApiResponse<null>>(`/qr/entry-points/${id}`),
 
   getCurrentTokens: () =>
-    api.get<ApiResponse<QRToken[]>>('/qr/current-tokens'),
+    api.get<ApiResponse<QRToken[]>>('/qr/active'),
 };

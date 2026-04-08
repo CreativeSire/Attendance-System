@@ -3,6 +3,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import path from 'path';
 import { env } from './config/env';
+import { prisma } from './config/prisma';
 import { errorHandler } from './middleware/errorHandler';
 
 import authRoutes from './routes/auth';
@@ -20,9 +21,21 @@ import adminRoutes from './routes/admin';
 
 export function createApp() {
   const app = express();
+  const allowedOrigins = new Set([
+    env.CLIENT_URL,
+    'http://localhost:5173',
+    'http://localhost:4173',
+  ]);
 
   app.use(cors({
-    origin: env.CLIENT_URL,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error('Origin not allowed by CORS'));
+    },
     credentials: true,
   }));
   app.use(morgan('dev'));
@@ -32,6 +45,16 @@ export function createApp() {
   // Health check
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  app.get('/health/ready', async (_req, res) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      res.json({ status: 'ready', timestamp: new Date().toISOString() });
+    } catch (error) {
+      console.error('[Healthcheck] readiness probe failed', error);
+      res.status(503).json({ status: 'degraded', timestamp: new Date().toISOString() });
+    }
   });
 
   // API routes

@@ -8,6 +8,7 @@ server/dist
 npm-debug.log
 .env
 server/.env
+backups
 *.pdf
 *.png
 *.zip

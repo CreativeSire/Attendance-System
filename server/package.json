@@ -10,12 +10,16 @@
     "db:init": "ts-node scripts/bootstrap-db.ts",
     "db:push": "prisma db push",
     "db:seed": "ts-node prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:backup": "ts-node scripts/export-db-backup.ts",
+    "db:seed-snapshot": "ts-node scripts/export-seed-snapshot.ts",
+    "smoke:test": "ts-node scripts/smoke-test.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "date-fns": "^3.6.0",
     "dotenv": "^16.4.5",
     "express": "^5.0.0",
     "jsonwebtoken": "^9.0.2",

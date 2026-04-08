@@ -166,6 +166,14 @@ export interface EntryPoint {
   createdAt: string;
 }
 
+export interface EntryQRCode {
+  entryPointId: string;
+  entryPointName: string;
+  token: string;
+  qrDataUrl: string;
+  expiresAt: string;
+}
+
 export interface PayrollCalculation {
   id: string;
   userId: string;

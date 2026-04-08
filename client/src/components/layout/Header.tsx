@@ -1,4 +1,4 @@
-import { Bell, Search } from 'lucide-react';
+import { Bell, Menu, Search } from 'lucide-react';
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useNotifications } from '@/hooks/useNotifications';
@@ -12,15 +12,25 @@ const pageTitles: Record<string, string> = {
   '/admin': 'Admin', '/profile': 'My Profile',
 };
 
-export default function Header() {
+export default function Header({ onMenuClick }: { onMenuClick?: () => void }) {
   const location = useLocation();
   const { notifications, unreadCount, markRead: markAsRead, markAllRead } = useNotifications();
   const [showNotifs, setShowNotifs] = useState(false);
   const title = pageTitles[location.pathname] || 'Dala';
 
   return (
-    <header className="h-14 border-b border-border bg-surface/80 backdrop-blur flex items-center justify-between px-6 shrink-0">
-      <h1 className="text-white font-semibold text-lg">{title}</h1>
+    <header className="h-14 border-b border-border bg-surface/80 backdrop-blur flex items-center justify-between px-4 md:px-6 shrink-0">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="inline-flex lg:hidden items-center justify-center w-9 h-9 rounded-lg border border-border bg-surface-2 text-gray-300 hover:text-white"
+          aria-label="Open navigation"
+        >
+          <Menu size={16} />
+        </button>
+        <h1 className="text-white font-semibold text-base md:text-lg">{title}</h1>
+      </div>
 
       <div className="flex items-center gap-3">
         {/* Search placeholder */}

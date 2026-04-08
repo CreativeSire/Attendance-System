@@ -57,6 +57,14 @@ async function validateQRToken(token: string, userId: string): Promise<{ valid: 
   if (qrToken.expiresAt < new Date()) return { valid: false, reason: 'Token expired' };
   if (qrToken.usedAt) return { valid: false, reason: 'Token already used' };
 
+  const entryPoint = await prisma.entryPoint.findUnique({
+    where: { id: qrToken.entryPointId },
+  });
+
+  if (!entryPoint || !entryPoint.isActive) {
+    return { valid: false, reason: 'Entry point inactive' };
+  }
+
   await prisma.qRToken.update({
     where: { id: qrToken.id },
     data: { usedAt: new Date(), usedBy: userId },
@@ -170,6 +178,16 @@ router.post('/clock-in', async (req: Request, res: Response, next: NextFunction)
 
     const now = new Date();
     const { appConfig } = await getRuntimeConfig();
+    if (appConfig.requireFaceCapture && !(data.facePhoto || data.photo)) {
+      res.status(400).json({ success: false, message: 'Face verification is required' });
+      return;
+    }
+
+    if (appConfig.requireLocation && data.workMode === 'office' && (data.lat === undefined || data.lng === undefined)) {
+      res.status(400).json({ success: false, message: 'Location access is required for office clock-in' });
+      return;
+    }
+
     const [startHour, startMinute] = appConfig.workStartTime.split(':').map((value: string) => parseInt(value, 10));
     const startOfWork = new Date(now);
     startOfWork.setHours(startHour, startMinute, 0, 0);
@@ -528,6 +546,19 @@ router.post('/:id/correct', async (req: Request, res: Response, next: NextFuncti
       },
     });
 
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: 'attendance.correction.requested',
+      entityType: 'attendance',
+      entityId: id,
+      metadata: {
+        correctionId: correction.id,
+        reason: data.reason,
+        newClockIn: data.newClockIn,
+        newClockOut: data.newClockOut,
+      },
+    });
+
     res.status(201).json({
       success: true,
       data: correction,
@@ -579,6 +610,17 @@ router.patch('/corrections/:id', requireRole('admin', 'manager'), async (req: Re
         });
       }
     }
+
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: `attendance.correction.${data.status}`,
+      entityType: 'attendance',
+      entityId: correction.recordId,
+      metadata: {
+        correctionId: correction.id,
+        reviewNote: data.reviewNote,
+      },
+    });
 
     // Notify the requester
     await createNotification(

@@ -17,16 +17,28 @@ function buildDatabaseUrlFromParts(rawEnv: NodeJS.ProcessEnv): string | undefine
 
 function getRailwayClientUrl(rawEnv: NodeJS.ProcessEnv): string | undefined {
   if (rawEnv.CLIENT_URL) return rawEnv.CLIENT_URL;
-  if (rawEnv.RAILWAY_STATIC_URL) return rawEnv.RAILWAY_STATIC_URL;
+  if (rawEnv.RAILWAY_STATIC_URL) return `https://${rawEnv.RAILWAY_STATIC_URL}`;
   if (rawEnv.RAILWAY_PUBLIC_DOMAIN) return `https://${rawEnv.RAILWAY_PUBLIC_DOMAIN}`;
+  return undefined;
+}
+
+function resolveRequiredSecret(key: 'JWT_SECRET' | 'JWT_REFRESH_SECRET'): string | undefined {
+  const value = process.env[key];
+  if (value && value.trim().length > 0) return value;
+
+  if ((process.env.NODE_ENV || 'development') !== 'production') {
+    return `${key.toLowerCase()}-local-development-only`;
+  }
+
   return undefined;
 }
 
 const normalizedEnv = {
   ...process.env,
   DATABASE_URL: process.env.DATABASE_URL || buildDatabaseUrlFromParts(process.env),
-  JWT_SECRET: process.env.JWT_SECRET || 'dala-jwt-secret-fallback-production',
-  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'dala-refresh-secret-fallback-production',
+  DATABASE_PUBLIC_URL: process.env.DATABASE_PUBLIC_URL || buildDatabaseUrlFromParts(process.env),
+  JWT_SECRET: resolveRequiredSecret('JWT_SECRET'),
+  JWT_REFRESH_SECRET: resolveRequiredSecret('JWT_REFRESH_SECRET'),
   PORT: process.env.PORT || '3001',
   CLIENT_URL: getRailwayClientUrl(process.env) || 'http://localhost:5173',
   NODE_ENV: process.env.NODE_ENV || 'development',
@@ -34,6 +46,7 @@ const normalizedEnv = {
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  DATABASE_PUBLIC_URL: z.string().optional(),
   JWT_SECRET: z.string().min(1, 'JWT_SECRET is required'),
   JWT_REFRESH_SECRET: z.string().min(1, 'JWT_REFRESH_SECRET is required'),
   PORT: z.string().default('3001'),
