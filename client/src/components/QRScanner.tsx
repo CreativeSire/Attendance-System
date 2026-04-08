@@ -6,6 +6,19 @@ import { Input } from '@/components/ui/input';
 
 interface QRScannerProps { onScan: (token: string) => void; onError?: (err: string) => void; }
 
+function shouldIgnoreScanError(error: string): boolean {
+  const normalized = error.toLowerCase();
+  return (
+    normalized.includes('no multiformat readers') ||
+    normalized.includes('no barcode or qr code detected') ||
+    normalized.includes('qr code parse error') ||
+    normalized.includes('indexsizeerror') ||
+    normalized.includes('not found') ||
+    normalized.includes('decode') ||
+    normalized.includes('parse error')
+  );
+}
+
 export default function QRScanner({ onScan, onError }: QRScannerProps) {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const divId = 'qr-scanner-div';
@@ -54,7 +67,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
           onScan(text);
         },
         (err) => {
-          if (onError && !err.includes('No MultiFormat')) onError(err);
+          if (onError && !shouldIgnoreScanError(err)) onError(err);
         }
       );
 
@@ -84,7 +97,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
             onScan(text);
           },
             (scanErr) => {
-              if (onError && !scanErr.includes('No MultiFormat')) onError(scanErr);
+              if (onError && !shouldIgnoreScanError(scanErr)) onError(scanErr);
             }
           );
 
