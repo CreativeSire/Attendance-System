@@ -311,6 +311,11 @@ router.post('/clock-out', async (req: Request, res: Response, next: NextFunction
       accuracy: data.accuracy,
     });
 
+    const previousRecord = existingRecord as typeof existingRecord & {
+      locationStatus?: string | null;
+      distanceFromOffice?: number | null;
+    };
+
     const record = await prisma.attendanceRecord.update({
       where: { id: existingRecord.id },
       data: {
@@ -322,8 +327,8 @@ router.post('/clock-out', async (req: Request, res: Response, next: NextFunction
         clockOutAccuracy: data.accuracy,
         totalHours,
         overtimeHours,
-        locationStatus: locationEvidence.locationStatus || existingRecord.locationStatus,
-        distanceFromOffice: locationEvidence.distanceFromOffice ?? existingRecord.distanceFromOffice,
+        locationStatus: locationEvidence.locationStatus || previousRecord.locationStatus,
+        distanceFromOffice: locationEvidence.distanceFromOffice ?? previousRecord.distanceFromOffice,
       } as any,
     }) as typeof existingRecord & { locationStatus?: string | null; distanceFromOffice?: number | null };
 
