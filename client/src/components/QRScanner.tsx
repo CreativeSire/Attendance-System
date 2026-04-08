@@ -76,14 +76,31 @@ function getPermissionHelp(isIOS: boolean) {
   ];
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function buildCameraAttemptOrder(cameras: CameraDevice[], preferredId?: string) {
+  if (cameras.length === 0) return [];
+
+  const order = [...cameras];
+  const preferredIndex = preferredId ? order.findIndex((camera) => camera.id === preferredId) : -1;
+
+  if (preferredIndex > 0) {
+    const [preferred] = order.splice(preferredIndex, 1);
+    order.unshift(preferred);
+  }
+
+  return order;
+}
+
 export default function QRScanner({ onScan, onError }: QRScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationRef = useRef<number | null>(null);
   const detectorRef = useRef<InstanceType<NonNullable<typeof window.BarcodeDetector>> | null>(null);
-  const autoSwitchTimeoutRef = useRef<number | null>(null);
-  const hasAutoSwitchedRef = useRef(false);
+  const lastPreviewAnalysisRef = useRef<number | null>(null);
 
   const [manualMode, setManualMode] = useState(false);
   const [manualToken, setManualToken] = useState('');
@@ -105,11 +122,6 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
-    }
-
-    if (autoSwitchTimeoutRef.current) {
-      window.clearTimeout(autoSwitchTimeoutRef.current);
-      autoSwitchTimeoutRef.current = null;
     }
 
     const stream = streamRef.current;
@@ -216,6 +228,65 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     return cameras;
   };
 
+  const previewLooksHealthy = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return false;
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0 || video.videoHeight === 0) {
+      return false;
+    }
+
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return false;
+
+    const sampleWidth = 64;
+    const sampleHeight = 48;
+    canvas.width = sampleWidth;
+    canvas.height = sampleHeight;
+    context.drawImage(video, 0, 0, sampleWidth, sampleHeight);
+
+    const imageData = context.getImageData(0, 0, sampleWidth, sampleHeight);
+    const data = imageData.data;
+
+    let min = 255;
+    let max = 0;
+    let total = 0;
+    let totalSquare = 0;
+    let samples = 0;
+
+    for (let i = 0; i < data.length; i += 16) {
+      const luma = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+      min = Math.min(min, luma);
+      max = Math.max(max, luma);
+      total += luma;
+      totalSquare += luma * luma;
+      samples += 1;
+    }
+
+    if (samples === 0) return false;
+
+    const average = total / samples;
+    const variance = totalSquare / samples - average * average;
+    const range = max - min;
+
+    lastPreviewAnalysisRef.current = Date.now();
+    return variance > 18 || range > 28;
+  };
+
+  const waitForHealthyPreview = async (timeoutMs = 2200) => {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      if (previewLooksHealthy()) {
+        return true;
+      }
+
+      await wait(180);
+    }
+
+    return false;
+  };
+
   const startStream = async (cameraId?: string) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('Camera scanning is not supported on this browser.');
@@ -254,11 +325,13 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     video.srcObject = stream;
     video.muted = true;
     video.playsInline = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('webkit-playsinline', 'true');
     video.autoplay = true;
     await video.play();
 
     setStarted(true);
-    setStatusMessage('Point the camera at the entrance QR code.');
+    setStatusMessage('Warming up the camera...');
     animationRef.current = requestAnimationFrame(() => {
       void detectFromFrame();
     });
@@ -269,35 +342,55 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
 
     setStarting(true);
     setCameraError(null);
-    hasAutoSwitchedRef.current = false;
 
     try {
       await stopScanner();
       const cameras = await refreshDevices();
       const preferred = forcedCameraId
-        ? cameras.find((camera) => camera.id === forcedCameraId) ?? null
-        : pickPreferredCamera(cameras);
+        ? cameras.find((camera) => camera.id === forcedCameraId)?.id
+        : pickPreferredCamera(cameras)?.id;
 
-      await startStream(preferred?.id);
-
-      if (autoSwitchTimeoutRef.current) {
-        window.clearTimeout(autoSwitchTimeoutRef.current);
-      }
-
-      autoSwitchTimeoutRef.current = window.setTimeout(() => {
-        const video = videoRef.current;
-        if (!video || hasAutoSwitchedRef.current || availableCameras.length < 2) return;
-
-        const frameLooksUnavailable = video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0 || video.videoHeight === 0;
-        if (frameLooksUnavailable) {
-          hasAutoSwitchedRef.current = true;
-          void switchCamera(true);
+      const orderedCameras = buildCameraAttemptOrder(cameras, preferred);
+      if (orderedCameras.length === 0) {
+        await startStream(undefined);
+        const healthy = await waitForHealthyPreview();
+        if (!healthy) {
+          throw new Error('Camera started, but no usable preview was detected.');
         }
-      }, 2500);
+      } else {
+        let healthy = false;
+        let lastAttemptError: string | null = null;
+
+        for (let index = 0; index < orderedCameras.length; index += 1) {
+          const candidate = orderedCameras[index];
+          setStatusMessage(`Trying camera ${index + 1} of ${orderedCameras.length}...`);
+
+          try {
+            await stopScanner();
+            await startStream(candidate.id);
+            healthy = await waitForHealthyPreview();
+
+            if (healthy) {
+              setStatusMessage('Point the camera at the entrance QR code.');
+              break;
+            }
+          } catch (error) {
+            lastAttemptError = error instanceof Error ? error.message : 'Camera could not be opened.';
+          }
+        }
+
+        if (!healthy) {
+          await stopScanner();
+          throw new Error(lastAttemptError ?? 'The camera opened, but the preview never became usable. Try Switch camera.');
+        }
+      }
     } catch (error) {
-      const message = error instanceof Error
+      const rawMessage = error instanceof Error
         ? error.message
         : 'Camera access failed. Please allow camera permission and try again.';
+      const message = rawMessage === 'Permission denied'
+        ? 'Camera access failed. Please allow camera permission and try again.'
+        : rawMessage;
 
       setCameraError(message);
       setStatusMessage('Camera could not be opened yet.');
@@ -317,7 +410,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     await startScanner(activeCameraId ?? undefined);
   };
 
-  const switchCamera = async (automatic = false) => {
+  const switchCamera = async () => {
     const cameras = availableCameras.length > 0 ? availableCameras : await refreshDevices();
     if (cameras.length < 2) return;
 
@@ -325,10 +418,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     const nextCamera = cameras[(currentIndex + 1 + cameras.length) % cameras.length];
     if (!nextCamera) return;
 
-    if (!automatic) {
-      setStatusMessage('Switching camera...');
-    }
-
+    setStatusMessage('Switching camera...');
     await startScanner(nextCamera.id);
   };
 
@@ -419,7 +509,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
         {started && (
           <div className="flex items-center gap-4">
             {availableCameras.length > 1 && (
-              <button
+                <button
                 onClick={() => void switchCamera()}
                 className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-accent transition-colors"
               >
