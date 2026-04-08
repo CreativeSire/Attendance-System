@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Camera, Keyboard, Loader2, QrCode, RefreshCcw } from 'lucide-react';
+import { Camera, Keyboard, Loader2, QrCode, RefreshCcw, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -37,6 +37,8 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
   const [started, setStarted] = useState(false);
   const [starting, setStarting] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [availableCameras, setAvailableCameras] = useState<Array<{ id: string; label: string }>>([]);
+  const [activeCameraId, setActiveCameraId] = useState<string | null>(null);
   const userAgent = typeof window !== 'undefined' ? window.navigator.userAgent : '';
   const isIPhone = /iPhone/i.test(userAgent);
   const isIPad = /iPad/i.test(userAgent) || (/Macintosh/i.test(userAgent) && 'ontouchend' in window);
@@ -62,6 +64,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
   };
 
   const startWithCameraId = async (scanner: Html5Qrcode, cameraId: string) => {
+    setActiveCameraId(cameraId);
     await scanner.start(
       cameraId,
       {
@@ -79,6 +82,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
   };
 
   const startWithFacingMode = async (scanner: Html5Qrcode, facingMode: 'environment' | 'user') => {
+    setActiveCameraId(null);
     await scanner.start(
       { facingMode },
       {
@@ -104,6 +108,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
       const scanner = new Html5Qrcode(divId, { verbose: false });
       scannerRef.current = scanner;
       const cameras = await Html5Qrcode.getCameras();
+      setAvailableCameras(cameras);
       const preferredCamera = pickPreferredCamera(cameras);
 
       if (preferredCamera) {
@@ -156,6 +161,32 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     }
     setStarted(false);
     setCameraError(null);
+  };
+
+  const switchCamera = async () => {
+    if (!scannerRef.current || availableCameras.length < 2 || !started) return;
+
+    const currentIndex = availableCameras.findIndex((camera) => camera.id === activeCameraId);
+    const nextCamera = availableCameras[(currentIndex + 1 + availableCameras.length) % availableCameras.length];
+    if (!nextCamera) return;
+
+    setStarting(true);
+    setCameraError(null);
+
+    try {
+      await scannerRef.current.stop().catch(() => {});
+      scannerRef.current.clear();
+      await startWithCameraId(scannerRef.current, nextCamera.id);
+      setStarted(true);
+    } catch (err) {
+      const message = err instanceof Error
+        ? err.message
+        : 'Unable to switch camera. Please try again.';
+      setCameraError(message);
+      if (onError) onError(message);
+    } finally {
+      setStarting(false);
+    }
   };
 
   if (manualMode) return (
@@ -232,12 +263,22 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
 
       <div className="flex flex-col items-center gap-2">
         {started && (
-          <button
-            onClick={resetScanner}
-            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-accent transition-colors"
-          >
-            <RefreshCcw size={12} /> Restart camera
-          </button>
+          <div className="flex items-center gap-4">
+            {availableCameras.length > 1 && (
+              <button
+                onClick={switchCamera}
+                className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-accent transition-colors"
+              >
+                <RotateCw size={12} /> Switch camera
+              </button>
+            )}
+            <button
+              onClick={resetScanner}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-accent transition-colors"
+            >
+              <RefreshCcw size={12} /> Restart camera
+            </button>
+          </div>
         )}
         <button onClick={() => setManualMode(true)} className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-accent transition-colors mx-auto">
           <Keyboard size={12} /> Can't scan? Enter token manually
