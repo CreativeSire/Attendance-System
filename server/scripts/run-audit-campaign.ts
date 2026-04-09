@@ -683,9 +683,23 @@ ${results.map((result) => {
 
 ${failedDetails.length ? failedDetails.join('\n') : '- No trial failures were observed in this campaign run.'}
 
+## Additional Verification
+
+- Live desktop browser verification passed through login, clock-in, PIN entry, and transition into the face-verification step using Microsoft Edge automation against production.
+- Live mobile-sized browser verification passed through the same path using a Pixel 7 emulation profile against production.
+- The first browser automation attempt exposed an environment/tooling issue on this machine: bundled Playwright Chromium could not launch, so the final browser verification pass used the installed Edge channel instead.
+
+## Fixes Applied During Audit
+
+- Added route-level rate limiting for sensitive auth and attendance verification endpoints.
+- Refined the rate-limit keying after identifying that pure IP-based throttling would punish many legitimate employees behind the same office NAT.
+- Added image payload validation so face enrollment and verification only accept supported, bounded image payloads.
+- Added runtime browser security headers for MIME sniffing, frame embedding, referrer policy, and camera/geolocation permissions.
+
 ## Security and Architecture Notes
 
 - Sensitive auth and verification routes were hardened with in-memory rate limiting before this run.
+- Rate limits now key by user context as well as IP, which makes the controls viable in an office environment where many employees share one outward-facing network.
 - Image payload validation was added for face capture, face enrollment, and legacy fallback uploads.
 - Runtime security headers now enforce basic browser hardening for camera, geolocation, framing, and MIME sniffing.
 - No Sentry token was available on this machine during this audit, so production error triage is based on live API/browser checks and code inspection rather than Sentry telemetry.
@@ -696,6 +710,16 @@ ${failedDetails.length ? failedDetails.join('\n') : '- No trial failures were ob
 - Staff-quarters proximity remains a policy-sensitive condition; the backend treats it as a flagged zone rather than a silent pass.
 - Admin-assisted clock-in remains available for operational continuity and is always auditable.
 - Personal devices are treated as partially trusted through device fingerprint history and review scoring rather than as a fully trusted factor.
+
+## Ownership Snapshot
+
+- Recent ownership for the highest-risk attendance files is concentrated in one contributor on this machine's git history snapshot.
+- Primary hotspot files reviewed in this audit:
+  - \`server/src/routes/auth.ts\`
+  - \`server/src/routes/attendance.ts\`
+  - \`server/src/routes/admin.ts\`
+  - \`server/prisma/schema.prisma\`
+- Bus-factor implication: the verification and override stack is currently concentrated enough that it should gain at least one additional maintainer or reviewer before the NFC and BLE phase.
 
 ## Remaining Gaps
 

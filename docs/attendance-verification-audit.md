@@ -1,6 +1,6 @@
 # Attendance Verification Audit
 
-Generated: 2026-04-09T02:37:53.176Z
+Generated: 2026-04-09T03:06:53.363Z
 Target: https://dala-attendance.up.railway.app
 Audit date: 2026-04-09
 
@@ -123,11 +123,11 @@ Audit date: 2026-04-09
 - AUD093 Joe Daniels 093 (location-denied): 5/5 trials passed. Final outcome: Verification flow completed with decision approved.
 - AUD094 Amos Daniels 094 (location-denied): 5/5 trials passed. Final outcome: Verification flow completed with decision approved.
 - AUD095 Bola Daniels 095 (location-denied): 5/5 trials passed. Final outcome: Verification flow completed with decision approved.
-- AUD096 Chika Daniels 096 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqv9smv024bohcmsxh4x9ff).
-- AUD097 Daniel Daniels 097 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqv9xnm0251ohcmncjdoxow).
-- AUD098 Esther Daniels 098 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqva3c3025rohcmeo22ji9a).
-- AUD099 Femi Daniels 099 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqva8ou026hohcmua6iex4r).
-- AUD100 Grace Daniels 100 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqvadpe0277ohcm0cpyczuq).
+- AUD096 Chika Daniels 096 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqwb2ts02403g8bca2sbvli).
+- AUD097 Daniel Daniels 097 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqwb86i024q3g8bq2ppmz0m).
+- AUD098 Esther Daniels 098 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqwbdv1025g3g8bnigfwnah).
+- AUD099 Femi Daniels 099 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqwbix502663g8blnlngs14).
+- AUD100 Grace Daniels 100 (admin-assisted): 5/5 trials passed. Final outcome: Admin-assisted flow completed (attendance cmnqwbojv026w3g8bub904rhd).
 
 ## Failures Observed
 
@@ -135,14 +135,14 @@ Audit date: 2026-04-09
 
 ## Additional Verification
 
-- Live desktop browser verification passed through login, clock-in, PIN entry, and transition into the face-verification step using Microsoft Edge automation.
+- Live desktop browser verification passed through login, clock-in, PIN entry, and transition into the face-verification step using Microsoft Edge automation against production.
 - Live mobile-sized browser verification passed through the same path using a Pixel 7 emulation profile against production.
-- The first browser automation attempt exposed an environment/tooling issue on this machine: bundled Playwright Chromium could not launch, so the verification pass was completed through the installed Edge channel instead.
+- The first browser automation attempt exposed an environment/tooling issue on this machine: bundled Playwright Chromium could not launch, so the final browser verification pass used the installed Edge channel instead.
 
 ## Fixes Applied During Audit
 
 - Added route-level rate limiting for sensitive auth and attendance verification endpoints.
-- Refined the rate-limit keys after identifying that pure IP-based throttling would punish many legitimate employees behind the same office NAT.
+- Refined the rate-limit keying after identifying that pure IP-based throttling would punish many legitimate employees behind the same office NAT.
 - Added image payload validation so face enrollment and verification only accept supported, bounded image payloads.
 - Added runtime browser security headers for MIME sniffing, frame embedding, referrer policy, and camera/geolocation permissions.
 
@@ -154,6 +154,13 @@ Audit date: 2026-04-09
 - Runtime security headers now enforce basic browser hardening for camera, geolocation, framing, and MIME sniffing.
 - No Sentry token was available on this machine during this audit, so production error triage is based on live API/browser checks and code inspection rather than Sentry telemetry.
 
+## Threat Model Highlights
+
+- Primary identity chain is now login + employee PIN + face capture + liveness + live location.
+- Staff-quarters proximity remains a policy-sensitive condition; the backend treats it as a flagged zone rather than a silent pass.
+- Admin-assisted clock-in remains available for operational continuity and is always auditable.
+- Personal devices are treated as partially trusted through device fingerprint history and review scoring rather than as a fully trusted factor.
+
 ## Ownership Snapshot
 
 - Recent ownership for the highest-risk attendance files is concentrated in one contributor on this machine's git history snapshot.
@@ -162,14 +169,7 @@ Audit date: 2026-04-09
   - `server/src/routes/attendance.ts`
   - `server/src/routes/admin.ts`
   - `server/prisma/schema.prisma`
-- Bus-factor implication: the verification and override stack is currently concentrated enough that it should gain at least one additional maintainer/reviewer before the NFC/BLE phase.
-
-## Threat Model Highlights
-
-- Primary identity chain is now login + employee PIN + face capture + liveness + live location.
-- Staff-quarters proximity remains a policy-sensitive condition; the backend treats it as a flagged zone rather than a silent pass.
-- Admin-assisted clock-in remains available for operational continuity and is always auditable.
-- Personal devices are treated as partially trusted through device fingerprint history and review scoring rather than as a fully trusted factor.
+- Bus-factor implication: the verification and override stack is currently concentrated enough that it should gain at least one additional maintainer or reviewer before the NFC and BLE phase.
 
 ## Remaining Gaps
 
