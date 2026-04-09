@@ -279,7 +279,7 @@ router.post('/verification/start', async (req: Request, res: Response, next: Nex
         challengeTypes,
         riskScore: baselineRisk.score,
         riskReasons: baselineRisk.reasons,
-        expiresAt: new Date(Date.now() + 90 * 1000),
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       },
     });
 

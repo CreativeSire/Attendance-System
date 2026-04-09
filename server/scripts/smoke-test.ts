@@ -55,6 +55,8 @@ async function main() {
       run: async () => {
         const token = await login('admin@dala.com', 'admin123');
         await authed('/api/admin/dashboard', token);
+        await authed('/api/admin/zones', token);
+        await authed('/api/admin/review-queue', token);
         await authed('/api/qr/entry-points', token);
       },
     },
@@ -70,9 +72,28 @@ async function main() {
       name: 'Employee auth + self-service endpoints',
       run: async () => {
         const token = await login('amaka@dala.com', 'password123');
+        await authed('/api/auth/me', token);
         await authed('/api/attendance/today-status', token);
         await authed('/api/attendance/my-stats', token);
         await authed('/api/bdd/today', token);
+      },
+    },
+    {
+      name: 'PIN-first verification stack',
+      run: async () => {
+        const token = await login('fatima@dala.com', 'password123');
+        await authed('/api/attendance/verification/start', token, {
+          method: 'POST',
+          body: JSON.stringify({
+            pin: '5555',
+            workMode: 'office',
+            lat: 6.52445,
+            lng: 3.37925,
+            accuracy: 8,
+            deviceFingerprint: 'smoke-fatima-device',
+            deviceLabel: 'Smoke Runner',
+          }),
+        });
       },
     },
     {
