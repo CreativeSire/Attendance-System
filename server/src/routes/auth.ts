@@ -7,8 +7,12 @@ import { prisma } from '../config/prisma';
 import { env } from '../config/env';
 import { verifyToken, requireRole } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
+import { rateLimit } from '../middleware/rateLimit';
+import { validateImagePayload } from '../utils/media';
 
 const router = Router();
+const authRateLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'auth' });
+const loginRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 10, keyPrefix: 'auth-login' });
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -41,7 +45,7 @@ function generateRefreshToken(userId: string): string {
 }
 
 // POST /api/auth/login
-router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/login', loginRateLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password } = loginSchema.parse(req.body);
 
@@ -156,7 +160,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
 });
 
 // POST /api/auth/refresh
-router.post('/refresh', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/refresh', authRateLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { refreshToken } = refreshSchema.parse(req.body);
 
@@ -207,7 +211,7 @@ router.post('/refresh', async (req: Request, res: Response, next: NextFunction) 
 });
 
 // POST /api/auth/logout
-router.post('/logout', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/logout', authRateLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : null;
     if (refreshToken) {
@@ -341,6 +345,10 @@ router.get('/face-enrollment', verifyToken, async (req: Request, res: Response, 
 router.post('/face-enrollment', verifyToken, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = faceEnrollmentSchema.parse(req.body);
+    const normalizedImages = data.images.map((image) => ({
+      ...image,
+      imageRef: validateImagePayload(image.imageRef, `images.${image.kind}`),
+    }));
     const activeEnrollment = await prisma.faceEnrollment.findFirst({
       where: { userId: req.user!.id, isActive: true },
       orderBy: { version: 'desc' },
@@ -359,10 +367,10 @@ router.post('/face-enrollment', verifyToken, async (req: Request, res: Response,
           userId: req.user!.id,
           version: nextVersion,
           isActive: true,
-          qualityScore: data.images.reduce((sum, item) => sum + (item.qualityScore ?? 0.82), 0) / data.images.length,
+          qualityScore: normalizedImages.reduce((sum, item) => sum + (item.qualityScore ?? 0.82), 0) / normalizedImages.length,
           appearanceMetadata: data.appearanceMetadata,
           images: {
-            create: data.images.map((image) => ({
+            create: normalizedImages.map((image) => ({
               kind: image.kind,
               imageRef: image.imageRef,
               qualityScore: image.qualityScore ?? 0.82,
@@ -375,7 +383,7 @@ router.post('/face-enrollment', verifyToken, async (req: Request, res: Response,
       await tx.user.update({
         where: { id: req.user!.id },
         data: {
-          masterPhoto: data.images[0]?.imageRef,
+          masterPhoto: normalizedImages[0]?.imageRef,
           appearanceProfile: data.appearanceMetadata,
         },
       });
@@ -387,10 +395,10 @@ router.post('/face-enrollment', verifyToken, async (req: Request, res: Response,
       actorId: req.user!.id,
       action: 'auth.face_enrollment.updated',
       entityType: 'face_enrollment',
-      entityId: enrollment.id,
+        entityId: enrollment.id,
       metadata: {
         version: nextVersion,
-        imageCount: data.images.length,
+        imageCount: normalizedImages.length,
       },
     });
 
@@ -451,10 +459,11 @@ router.patch('/profile', verifyToken, async (req: Request, res: Response, next: 
 router.post('/master-photo', verifyToken, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { photo } = z.object({ photo: z.string().min(1) }).parse(req.body);
+    const normalizedPhoto = validateImagePayload(photo, 'photo');
 
     await prisma.user.update({
       where: { id: req.user!.id },
-      data: { masterPhoto: photo },
+      data: { masterPhoto: normalizedPhoto },
     });
 
     await createAuditLog({
@@ -464,7 +473,7 @@ router.post('/master-photo', verifyToken, async (req: Request, res: Response, ne
       entityId: req.user!.id,
     });
 
-    res.json({ success: true, data: { url: photo }, message: 'Master photo updated' });
+    res.json({ success: true, data: { url: normalizedPhoto }, message: 'Master photo updated' });
   } catch (error) {
     next(error);
   }

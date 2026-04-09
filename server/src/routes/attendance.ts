@@ -7,6 +7,8 @@ import { getIO } from '../socket';
 import { createNotification } from '../utils/notifications';
 import { createAuditLog } from '../utils/audit';
 import { classifyLocationEvidence, getRuntimeConfig, haversineDistanceMeters } from '../utils/settings';
+import { validateImagePayload } from '../utils/media';
+import { rateLimit } from '../middleware/rateLimit';
 import {
   assessRisk,
   buildLivenessPrompt,
@@ -17,6 +19,7 @@ import {
 } from '../utils/verification';
 
 const router = Router();
+const verificationRateLimit = rateLimit({ windowMs: 10 * 60_000, max: 30, keyPrefix: 'attendance-verification' });
 
 router.use(verifyToken);
 
@@ -163,7 +166,7 @@ router.get('/today/:userId', async (req: Request, res: Response, next: NextFunct
   }
 });
 
-router.post('/verification/start', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/verification/start', verificationRateLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = verificationStartSchema.parse(req.body);
     const user = await prisma.user.findUnique({
@@ -322,9 +325,10 @@ router.post('/verification/start', async (req: Request, res: Response, next: Nex
   }
 });
 
-router.post('/verification/complete', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/verification/complete', verificationRateLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = verificationCompleteSchema.parse(req.body);
+    const normalizedFacePhoto = validateImagePayload(data.facePhoto, 'facePhoto');
     const today = getTodayString();
 
     const existing = await prisma.attendanceRecord.findFirst({
@@ -397,7 +401,7 @@ router.post('/verification/complete', async (req: Request, res: Response, next: 
         userId: req.user!.id,
         date: today,
         clockInTime: now,
-        clockInPhoto: data.facePhoto,
+        clockInPhoto: normalizedFacePhoto,
         clockInMethod: 'pin_face_location',
         clockInLat: session.locationLat,
         clockInLng: session.locationLng,
@@ -523,7 +527,7 @@ router.post('/verification/complete', async (req: Request, res: Response, next: 
 });
 
 // POST /api/attendance/clock-in
-router.post('/clock-in', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/clock-in', verificationRateLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const schema = z.object({
       qrToken: z.string(),
@@ -539,6 +543,8 @@ router.post('/clock-in', async (req: Request, res: Response, next: NextFunction)
     });
     const data = schema.parse(req.body);
     const userId = data.userId || req.user!.id;
+    const normalizedFacePhoto = data.facePhoto ? validateImagePayload(data.facePhoto, 'facePhoto') : undefined;
+    const normalizedPhoto = data.photo ? validateImagePayload(data.photo, 'photo') : undefined;
 
     if (req.user!.role === 'employee' && req.user!.id !== userId) {
       res.status(403).json({ success: false, message: 'Access denied' });
@@ -570,7 +576,7 @@ router.post('/clock-in', async (req: Request, res: Response, next: NextFunction)
 
     const now = new Date();
     const { appConfig } = await getRuntimeConfig();
-    if (appConfig.requireFaceCapture && !(data.facePhoto || data.photo)) {
+    if (appConfig.requireFaceCapture && !(normalizedFacePhoto || normalizedPhoto)) {
       res.status(400).json({ success: false, message: 'Face verification is required' });
       return;
     }
@@ -601,7 +607,7 @@ router.post('/clock-in', async (req: Request, res: Response, next: NextFunction)
         userId,
         date: today,
         clockInTime: now,
-        clockInPhoto: data.facePhoto || data.photo,
+        clockInPhoto: normalizedFacePhoto || normalizedPhoto,
         clockInMethod: 'qr',
         clockInLat: data.lat,
         clockInLng: data.lng,
@@ -671,7 +677,7 @@ router.post('/clock-in', async (req: Request, res: Response, next: NextFunction)
 });
 
 // POST /api/attendance/clock-out
-router.post('/clock-out', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/clock-out', verificationRateLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const schema = z.object({
       userId: z.string().optional(),
@@ -683,6 +689,8 @@ router.post('/clock-out', async (req: Request, res: Response, next: NextFunction
     });
     const data = schema.parse(req.body);
     const userId = data.userId || req.user!.id;
+    const normalizedFacePhoto = data.facePhoto ? validateImagePayload(data.facePhoto, 'facePhoto') : undefined;
+    const normalizedPhoto = data.photo ? validateImagePayload(data.photo, 'photo') : undefined;
 
     if (req.user!.role === 'employee' && req.user!.id !== userId) {
       res.status(403).json({ success: false, message: 'Access denied' });
@@ -730,7 +738,7 @@ router.post('/clock-out', async (req: Request, res: Response, next: NextFunction
       where: { id: existingRecord.id },
       data: {
         clockOutTime: now,
-        clockOutPhoto: data.facePhoto || data.photo,
+        clockOutPhoto: normalizedFacePhoto || normalizedPhoto,
         clockOutMethod: 'manual',
         clockOutLat: data.lat,
         clockOutLng: data.lng,

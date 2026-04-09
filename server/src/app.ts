@@ -21,6 +21,8 @@ import adminRoutes from './routes/admin';
 
 export function createApp() {
   const app = express();
+  app.set('trust proxy', 1);
+
   const allowedOrigins = new Set([
     env.CLIENT_URL,
     'http://localhost:5173',
@@ -39,6 +41,13 @@ export function createApp() {
     credentials: true,
   }));
   app.use(morgan('dev'));
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(self), geolocation=(self), microphone=(self)');
+    next();
+  });
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
