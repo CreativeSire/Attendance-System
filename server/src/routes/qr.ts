@@ -187,17 +187,17 @@ router.post('/validate', verifyToken, async (req: Request, res: Response, next: 
     });
 
     if (!qrToken) {
-      res.json({ success: true, data: { valid: false, reason: 'Token not found' } });
+      res.status(404).json({ success: false, message: 'Token not found', data: { valid: false } });
       return;
     }
 
     if (qrToken.expiresAt < new Date()) {
-      res.json({ success: true, data: { valid: false, reason: 'Token expired' } });
+      res.status(422).json({ success: false, message: 'Token expired', data: { valid: false } });
       return;
     }
 
     if (qrToken.usedAt) {
-      res.json({ success: true, data: { valid: false, reason: 'Token already used' } });
+      res.status(422).json({ success: false, message: 'Token already used', data: { valid: false } });
       return;
     }
 

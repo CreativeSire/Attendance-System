@@ -178,7 +178,32 @@ router.get('/today/:userId', async (req: Request, res: Response, next: NextFunct
 
 router.post('/verification/start', verificationRateLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // Reject nested location format early with a helpful message
+    if (req.body && typeof req.body.location === 'object' && req.body.location !== null) {
+      res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: [{ field: 'location', message: 'Send location as flat fields: lat, lng, accuracy — not as a nested object.' }],
+      });
+      return;
+    }
+
     const data = verificationStartSchema.parse(req.body);
+
+    // Pre-check: employee already has attendance today — no need to create a session
+    const todayStr = getTodayString();
+    const existingAttendance = await prisma.attendanceRecord.findFirst({
+      where: { userId: req.user!.id, date: todayStr },
+    });
+    if (existingAttendance) {
+      res.status(409).json({
+        success: false,
+        message: 'Attendance has already been recorded for today.',
+        data: normalizeAttendanceRecord({ ...existingAttendance, bddSubmitted: false }),
+      });
+      return;
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.user!.id },
       include: {
@@ -257,6 +282,16 @@ router.post('/verification/start', verificationRateLimit, async (req: Request, r
       lng: data.lng,
       accuracy: data.accuracy,
     });
+
+    // Enforce requireLocation setting: block the session if location is unavailable and policy requires it
+    const { appConfig } = await getRuntimeConfig();
+    if (appConfig.requireLocation && locationResult.locationStatus === 'unavailable') {
+      res.status(403).json({
+        success: false,
+        message: 'Location is required to clock in. Please enable location access and try again.',
+      });
+      return;
+    }
 
     const baselineRisk = assessRisk({
       pinVerified: true,
@@ -346,10 +381,10 @@ router.post('/verification/complete', verificationRateLimit, async (req: Request
     });
 
     if (existing) {
-      res.json({
-        success: true,
-        data: normalizeAttendanceRecord({ ...existing, bddSubmitted: false }),
+      res.status(409).json({
+        success: false,
         message: 'Attendance has already been recorded for today.',
+        data: normalizeAttendanceRecord({ ...existing, bddSubmitted: false }),
       });
       return;
     }

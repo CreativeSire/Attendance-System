@@ -68,6 +68,23 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       return;
     }
 
+    // Require at least one meaningful content field
+    const contentFields = [
+      data.priorityOne, data.todayPriority1, data.mondayPriority1,
+      data.priorityTwo, data.todayPriority2, data.mondayPriority2,
+      data.priorityThree, data.todayPriority3, data.mondayPriority3,
+      data.blockers, data.weeklyGoal, data.completedYesterday,
+      data.keyWins, data.wouldDoDifferently, data.nextWeekPriorities,
+    ].filter((v) => typeof v === 'string' && v.trim().length >= 3);
+
+    if (contentFields.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: 'Please fill in at least one field (e.g. priorities or blockers) before submitting.',
+      });
+      return;
+    }
+
     const now = new Date();
     const dateStr = data.date || now.toISOString().split('T')[0];
     const dateObj = new Date(dateStr);

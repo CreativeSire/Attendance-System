@@ -49,7 +49,7 @@ const faceEnrollmentSchema = z.object({
 });
 
 function generateAccessToken(userId: string, role: string): string {
-  return jwt.sign({ id: userId, role }, env.JWT_SECRET, { expiresIn: '15m' });
+  return jwt.sign({ id: userId, role }, env.JWT_SECRET, { expiresIn: '30m' });
 }
 
 function generateRefreshToken(userId: string): string {

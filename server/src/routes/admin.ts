@@ -196,9 +196,8 @@ router.patch('/settings', async (req: Request, res: Response, next: NextFunction
       },
     });
 
-    let office: Awaited<ReturnType<typeof prisma.officeLocation.upsert>> | null = null;
     if (payload.office) {
-      office = await prisma.officeLocation.upsert({
+      await prisma.officeLocation.upsert({
         where: { id: payload.office.id || 'dala-hq' },
         update: payload.office,
         create: {
@@ -208,7 +207,12 @@ router.patch('/settings', async (req: Request, res: Response, next: NextFunction
       });
     }
 
-    res.json({ success: true, data: { appConfig, office }, message: 'Settings updated' });
+    const officeLocations = await prisma.officeLocation.findMany({
+      where: { isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    res.json({ success: true, data: { appConfig, officeLocations }, message: 'Settings updated' });
   } catch (err) { next(err); }
 });
 
