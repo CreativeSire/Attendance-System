@@ -42,11 +42,50 @@ enum WorkMode {
   client_site
 }
 
+enum OfficeZoneType {
+  entry_zone
+  work_zone
+  staff_quarters_zone
+  admin_zone
+  warehouse_zone
+  restricted_zone
+}
+
+enum VerificationMethod {
+  qr_fallback
+  pin_face_location
+  admin_override
+}
+
+enum VerificationDecision {
+  approved
+  flagged
+  blocked
+}
+
+enum ReviewQueueStatus {
+  pending
+  approved
+  rejected
+  escalated
+}
+
+enum LivenessChallengeType {
+  blink_twice
+  turn_left
+  turn_right
+  nod_slowly
+  say_digits
+}
+
 model User {
   id            String   @id @default(cuid())
   name          String
   email         String   @unique
   password      String
+  pinHash       String?
+  pinFailedAttempts Int  @default(0)
+  pinLockedUntil DateTime?
   role          Role     @default(employee)
   department    String?
   employeeId    String   @unique
@@ -54,6 +93,7 @@ model User {
   hourlyRate    Float    @default(0)
   basicSalary   Float    @default(0)
   masterPhoto   String?
+  appearanceProfile Json?
   phone         String?
   startDate     DateTime @default(now())
   isActive      Boolean  @default(true)
@@ -67,6 +107,14 @@ model User {
   goals         PerformanceGoal[]
   notifications Notification[]
   refreshTokens RefreshToken[]
+  deviceProfiles DeviceProfile[]
+  faceEnrollments FaceEnrollment[]
+  verificationSessions VerificationSession[]
+  attendanceVerifications AttendanceVerification[]
+  livenessAttempts LivenessAttempt[]
+  reviewQueueItems ReviewQueueItem[]
+  adminOverridesMade AdminOverride[] @relation("AdminOverrideActor")
+  adminOverridesReceived AdminOverride[] @relation("AdminOverrideTarget")
 }
 
 model OfficeLocation {
@@ -79,6 +127,8 @@ model OfficeLocation {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  zones        OfficeZone[]
 }
 
 model AppConfig {
@@ -89,6 +139,7 @@ model AppConfig {
   requireLocation     Boolean  @default(true)
   requireFaceCapture  Boolean  @default(true)
   requireLiveness     Boolean  @default(true)
+  requireEmployeePin  Boolean  @default(true)
   defaultOfficeId     String?
   latePenaltyMode     String   @default("track_only")
   createdAt           DateTime @default(now())
@@ -156,10 +207,15 @@ model AttendanceRecord {
   entryPoint     String?
   approvedBy     String?
   notes          String?
+  reviewDecision VerificationDecision @default(approved)
+  verificationMethod VerificationMethod @default(qr_fallback)
+  reviewReasons  Json?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
   correction CorrectionRequest?
+  verification AttendanceVerification?
+  adminOverride AdminOverride?
 }
 
 model CorrectionRequest {
@@ -294,4 +350,158 @@ model EntryPoint {
   location  String
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+}
+
+model DeviceProfile {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fingerprint   String
+  label         String?
+  platform      String?
+  userAgent     String?
+  firstSeenAt   DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+  trusted       Boolean  @default(false)
+  riskFlags     Json?
+
+  attendanceVerifications AttendanceVerification[]
+
+  @@unique([userId, fingerprint])
+}
+
+model FaceEnrollment {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version            Int      @default(1)
+  isActive           Boolean  @default(true)
+  qualityScore       Float    @default(0)
+  appearanceMetadata Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  images             FaceEnrollmentImage[]
+}
+
+model FaceEnrollmentImage {
+  id            String   @id @default(cuid())
+  enrollmentId  String
+  enrollment    FaceEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  kind          String
+  imageRef      String
+  qualityScore  Float    @default(0)
+  createdAt     DateTime @default(now())
+}
+
+model OfficeZone {
+  id                  String   @id @default(cuid())
+  officeLocationId    String
+  officeLocation      OfficeLocation @relation(fields: [officeLocationId], references: [id], onDelete: Cascade)
+  name                String
+  type                OfficeZoneType
+  centerLat           Float
+  centerLng           Float
+  radiusMeters        Int      @default(50)
+  allowedForAttendance Boolean @default(true)
+  riskWeight          Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  verificationSessions VerificationSession[]
+}
+
+model VerificationSession {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workMode          WorkMode @default(office)
+  pinVerified       Boolean  @default(false)
+  deviceFingerprint String?
+  deviceLabel       String?
+  locationLat       Float?
+  locationLng       Float?
+  locationAccuracy  Float?
+  locationStatus    String?
+  distanceFromOffice Float?
+  officeZoneId      String?
+  officeZone        OfficeZone? @relation(fields: [officeZoneId], references: [id], onDelete: SetNull)
+  challengeTypes    LivenessChallengeType[]
+  riskScore         Int      @default(0)
+  riskReasons       Json?
+  expiresAt         DateTime
+  completedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model LivenessAttempt {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verificationSessionId String?
+  attendanceVerificationId String?
+  challengeTypes    LivenessChallengeType[]
+  spokenDigits      String?
+  resultScore       Float    @default(0)
+  passed            Boolean  @default(false)
+  metadata          Json?
+  createdAt         DateTime @default(now())
+}
+
+model AttendanceVerification {
+  id                String   @id @default(cuid())
+  attendanceRecordId String  @unique
+  attendanceRecord  AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verificationSessionId String?
+  pinVerified       Boolean  @default(false)
+  faceScore         Float?
+  faceDecision      VerificationDecision @default(flagged)
+  livenessScore     Float?
+  locationStatus    String?
+  zoneType          OfficeZoneType?
+  riskScore         Int      @default(0)
+  riskReasons       Json?
+  aiSummary         String?
+  reviewStatus      ReviewQueueStatus @default(pending)
+  deviceProfileId   String?
+  deviceProfile     DeviceProfile? @relation(fields: [deviceProfileId], references: [id], onDelete: SetNull)
+  method            VerificationMethod @default(pin_face_location)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  reviewQueueItem   ReviewQueueItem?
+}
+
+model ReviewQueueItem {
+  id                    String   @id @default(cuid())
+  attendanceVerificationId String @unique
+  attendanceVerification AttendanceVerification @relation(fields: [attendanceVerificationId], references: [id], onDelete: Cascade)
+  attendanceRecordId    String?
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  riskScore             Int      @default(0)
+  status                ReviewQueueStatus @default(pending)
+  recommendation        String?
+  reasons               Json?
+  reviewedBy            String?
+  reviewNote            String?
+  reviewedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model AdminOverride {
+  id                String   @id @default(cuid())
+  attendanceRecordId String  @unique
+  attendanceRecord  AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  employeeId        String
+  employee          User     @relation("AdminOverrideTarget", fields: [employeeId], references: [id], onDelete: Cascade)
+  adminId           String
+  admin             User     @relation("AdminOverrideActor", fields: [adminId], references: [id], onDelete: Cascade)
+  reasonCode        String
+  note              String?
+  createdAt         DateTime @default(now())
 }

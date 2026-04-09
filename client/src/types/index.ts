@@ -5,6 +5,26 @@ export type LeaveType = 'ANNUAL' | 'SICK' | 'CASUAL' | 'MATERNITY' | 'PATERNITY'
 export type ExpenseStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 export type ExpenseCategory = 'TRAVEL' | 'MEALS' | 'ACCOMMODATION' | 'EQUIPMENT' | 'TRAINING' | 'OTHER';
 export type BDDDay = 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY';
+export type VerificationDecision = 'approved' | 'flagged' | 'blocked';
+export type ReviewQueueStatus = 'pending' | 'approved' | 'rejected' | 'escalated';
+export type OfficeZoneType =
+  | 'entry_zone'
+  | 'work_zone'
+  | 'staff_quarters_zone'
+  | 'admin_zone'
+  | 'warehouse_zone'
+  | 'restricted_zone';
+export type LocationClassification =
+  | 'inside_work_zone'
+  | 'inside_entry_zone'
+  | 'inside_staff_quarters_zone'
+  | 'inside_restricted_zone'
+  | 'inside_radius'
+  | 'near_office'
+  | 'far'
+  | 'poor_accuracy'
+  | 'unavailable';
+export type LivenessChallengeType = 'blink_twice' | 'turn_left' | 'turn_right' | 'nod_slowly' | 'say_digits';
 
 export interface User {
   id: string;
@@ -16,11 +36,15 @@ export interface User {
   phone?: string;
   avatar?: string;
   masterPhotoUrl?: string;
+  employeeId?: string;
   managerId?: string;
   entryPointId?: string;
   annualLeaveBalance: number;
   sickLeaveBalance: number;
   casualLeaveBalance: number;
+  hasPin?: boolean;
+  hasFaceEnrollment?: boolean;
+  appearanceProfile?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -42,8 +66,75 @@ export interface AttendanceRecord {
   overtimeHours?: number;
   bddSubmitted: boolean;
   mood?: string;
+  locationStatus?: LocationClassification | string;
+  distanceFromOffice?: number | null;
+  reviewDecision?: VerificationDecision;
+  verificationMethod?: 'qr_fallback' | 'pin_face_location' | 'admin_override';
+  reviewReasons?: string[];
+  verification?: AttendanceVerification;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FaceEnrollmentImage {
+  id?: string;
+  kind: string;
+  imageRef: string;
+  qualityScore?: number;
+}
+
+export interface FaceEnrollment {
+  id: string;
+  userId: string;
+  version: number;
+  qualityScore: number;
+  isActive: boolean;
+  appearanceMetadata?: Record<string, unknown>;
+  images: FaceEnrollmentImage[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface VerificationPrompt {
+  type: LivenessChallengeType;
+  prompt: string;
+}
+
+export interface VerificationSessionLocation {
+  status: LocationClassification | string;
+  distanceFromOffice?: number | null;
+  zoneType?: OfficeZoneType | null;
+  zoneName?: string | null;
+}
+
+export interface VerificationRisk {
+  score: number;
+  reasons: string[];
+}
+
+export interface VerificationSession {
+  sessionId: string;
+  expiresAt: string;
+  prompts: VerificationPrompt[];
+  location: VerificationSessionLocation;
+  risk: VerificationRisk;
+  enrollmentReady: boolean;
+}
+
+export interface LivenessResponse {
+  type: LivenessChallengeType;
+  passed: boolean;
+  spokenDigits?: string;
+  confidence?: number;
+}
+
+export interface AttendanceVerification {
+  id: string;
+  riskScore: number;
+  decision: VerificationDecision;
+  reasons: string[];
+  reviewStatus: ReviewQueueStatus;
+  aiSummary?: string;
 }
 
 export interface BDDCheckIn {
@@ -172,6 +263,62 @@ export interface EntryQRCode {
   token: string;
   qrDataUrl: string;
   expiresAt: string;
+}
+
+export interface OfficeLocation {
+  id: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  isActive?: boolean;
+}
+
+export interface OfficeZone {
+  id: string;
+  officeLocationId: string;
+  officeLocation?: OfficeLocation;
+  name: string;
+  type: OfficeZoneType;
+  centerLat: number;
+  centerLng: number;
+  radiusMeters: number;
+  allowedForAttendance: boolean;
+  riskWeight: number;
+  createdAt?: string;
+}
+
+export interface ReviewQueueItem {
+  id: string;
+  attendanceVerificationId: string;
+  attendanceRecordId?: string;
+  userId: string;
+  user?: User;
+  attendanceVerification?: AttendanceVerification;
+  riskScore: number;
+  status: ReviewQueueStatus;
+  recommendation: string;
+  reasons: string[];
+  reviewNote?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+}
+
+export interface AdminSettings {
+  appConfig: {
+    id: string;
+    workStartTime: string;
+    gracePeriodMinutes: number;
+    qrExpirySeconds: number;
+    requireLocation: boolean;
+    requireFaceCapture: boolean;
+    requireLiveness: boolean;
+    requireEmployeePin: boolean;
+    latePenaltyMode: string;
+  };
+  officeLocations: OfficeLocation[];
 }
 
 export interface PayrollCalculation {

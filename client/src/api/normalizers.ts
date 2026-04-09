@@ -1,11 +1,15 @@
 import type {
   AttendanceRecord,
+  AttendanceVerification,
   BroadcastMessage,
   ExpenseRequest,
+  FaceEnrollment,
   LeaveRequest,
   Notification,
+  OfficeZone,
   PayrollCalculation,
   PerformanceGoal,
+  ReviewQueueItem,
   User,
 } from '@/types';
 
@@ -27,6 +31,7 @@ export function normalizeUser(input: Record<string, unknown>): User {
     department: String(input.department || 'General'),
     position: String(input.position || 'Employee'),
     phone: typeof input.phone === 'string' ? input.phone : undefined,
+    employeeId: typeof input.employeeId === 'string' ? input.employeeId : undefined,
     masterPhotoUrl: typeof input.masterPhoto === 'string'
       ? input.masterPhoto
       : typeof input.masterPhotoUrl === 'string'
@@ -35,8 +40,28 @@ export function normalizeUser(input: Record<string, unknown>): User {
     annualLeaveBalance: Number(input.annualLeaveBalance || 0),
     sickLeaveBalance: Number(input.sickLeaveBalance || 0),
     casualLeaveBalance: Number(input.casualLeaveBalance || 0),
+    hasPin: Boolean(input.hasPin ?? input.pinHash),
+    hasFaceEnrollment: Boolean(input.hasFaceEnrollment ?? input.masterPhoto ?? input.masterPhotoUrl),
+    appearanceProfile: input.appearanceProfile && typeof input.appearanceProfile === 'object'
+      ? input.appearanceProfile as Record<string, unknown>
+      : undefined,
     createdAt: String(input.createdAt || new Date().toISOString()),
     updatedAt: String(input.updatedAt || input.createdAt || new Date().toISOString()),
+  };
+}
+
+export function normalizeAttendanceVerification(input: Record<string, unknown>): AttendanceVerification {
+  return {
+    id: String(input.id || ''),
+    riskScore: Number(input.riskScore || 0),
+    decision: String(input.decision || 'approved') as AttendanceVerification['decision'],
+    reasons: Array.isArray(input.reasons)
+      ? input.reasons.map((item) => String(item))
+      : Array.isArray(input.riskReasons)
+        ? (input.riskReasons as unknown[]).map((item) => String(item))
+        : [],
+    reviewStatus: String(input.reviewStatus || 'pending') as AttendanceVerification['reviewStatus'],
+    aiSummary: typeof input.aiSummary === 'string' ? input.aiSummary : undefined,
   };
 }
 
@@ -71,8 +96,90 @@ export function normalizeAttendance(input: Record<string, unknown>): AttendanceR
     overtimeHours: Number(input.overtimeHours ?? 0),
     bddSubmitted: Boolean(input.bddSubmitted),
     mood: typeof input.mood === 'string' ? input.mood : undefined,
+    locationStatus: typeof input.locationStatus === 'string' ? input.locationStatus : undefined,
+    distanceFromOffice: typeof input.distanceFromOffice === 'number' ? input.distanceFromOffice : null,
+    reviewDecision: typeof input.reviewDecision === 'string' ? input.reviewDecision as AttendanceRecord['reviewDecision'] : undefined,
+    verificationMethod: typeof input.verificationMethod === 'string' ? input.verificationMethod as AttendanceRecord['verificationMethod'] : undefined,
+    reviewReasons: Array.isArray(input.reviewReasons) ? input.reviewReasons.map((item) => String(item)) : undefined,
+    verification: input.verification && typeof input.verification === 'object'
+      ? normalizeAttendanceVerification(input.verification as Record<string, unknown>)
+      : undefined,
     createdAt: String(input.createdAt || new Date().toISOString()),
     updatedAt: String(input.updatedAt || input.createdAt || new Date().toISOString()),
+  };
+}
+
+export function normalizeFaceEnrollment(input: Record<string, unknown>): FaceEnrollment {
+  return {
+    id: String(input.id || ''),
+    userId: String(input.userId || ''),
+    version: Number(input.version || 1),
+    qualityScore: Number(input.qualityScore || 0),
+    isActive: Boolean(input.isActive),
+    appearanceMetadata: input.appearanceMetadata && typeof input.appearanceMetadata === 'object'
+      ? input.appearanceMetadata as Record<string, unknown>
+      : undefined,
+    images: Array.isArray(input.images)
+      ? input.images.map((image) => ({
+          id: typeof (image as Record<string, unknown>).id === 'string' ? String((image as Record<string, unknown>).id) : undefined,
+          kind: String((image as Record<string, unknown>).kind || 'front'),
+          imageRef: String((image as Record<string, unknown>).imageRef || ''),
+          qualityScore: typeof (image as Record<string, unknown>).qualityScore === 'number'
+            ? Number((image as Record<string, unknown>).qualityScore)
+            : undefined,
+        }))
+      : [],
+    createdAt: String(input.createdAt || new Date().toISOString()),
+    updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt : undefined,
+  };
+}
+
+export function normalizeOfficeZone(input: Record<string, unknown>): OfficeZone {
+  return {
+    id: String(input.id || ''),
+    officeLocationId: String(input.officeLocationId || ''),
+    officeLocation: input.officeLocation && typeof input.officeLocation === 'object'
+      ? {
+          id: String((input.officeLocation as Record<string, unknown>).id || ''),
+          name: String((input.officeLocation as Record<string, unknown>).name || ''),
+          address: String((input.officeLocation as Record<string, unknown>).address || ''),
+          latitude: Number((input.officeLocation as Record<string, unknown>).latitude || 0),
+          longitude: Number((input.officeLocation as Record<string, unknown>).longitude || 0),
+          radiusMeters: Number((input.officeLocation as Record<string, unknown>).radiusMeters || 0),
+          isActive: Boolean((input.officeLocation as Record<string, unknown>).isActive ?? true),
+        }
+      : undefined,
+    name: String(input.name || ''),
+    type: String(input.type || 'work_zone') as OfficeZone['type'],
+    centerLat: Number(input.centerLat || 0),
+    centerLng: Number(input.centerLng || 0),
+    radiusMeters: Number(input.radiusMeters || 0),
+    allowedForAttendance: Boolean(input.allowedForAttendance ?? true),
+    riskWeight: Number(input.riskWeight || 0),
+    createdAt: typeof input.createdAt === 'string' ? input.createdAt : undefined,
+  };
+}
+
+export function normalizeReviewQueueItem(input: Record<string, unknown>): ReviewQueueItem {
+  return {
+    id: String(input.id || ''),
+    attendanceVerificationId: String(input.attendanceVerificationId || ''),
+    attendanceRecordId: typeof input.attendanceRecordId === 'string' ? input.attendanceRecordId : undefined,
+    userId: String(input.userId || ''),
+    user: input.user && typeof input.user === 'object'
+      ? normalizeUser(input.user as Record<string, unknown>)
+      : undefined,
+    attendanceVerification: input.attendanceVerification && typeof input.attendanceVerification === 'object'
+      ? normalizeAttendanceVerification(input.attendanceVerification as Record<string, unknown>)
+      : undefined,
+    riskScore: Number(input.riskScore || 0),
+    status: String(input.status || 'pending') as ReviewQueueItem['status'],
+    recommendation: String(input.recommendation || ''),
+    reasons: Array.isArray(input.reasons) ? input.reasons.map((item) => String(item)) : [],
+    reviewNote: typeof input.reviewNote === 'string' ? input.reviewNote : undefined,
+    reviewedBy: typeof input.reviewedBy === 'string' ? input.reviewedBy : undefined,
+    reviewedAt: typeof input.reviewedAt === 'string' ? input.reviewedAt : undefined,
+    createdAt: String(input.createdAt || new Date().toISOString()),
   };
 }
 

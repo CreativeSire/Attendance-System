@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../config/prisma';
 import { env } from '../config/env';
-import { verifyToken } from '../middleware/auth';
+import { verifyToken, requireRole } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 
 const router = Router();
@@ -17,6 +17,19 @@ const loginSchema = z.object({
 
 const refreshSchema = z.object({
   refreshToken: z.string(),
+});
+
+const pinSchema = z.object({
+  pin: z.string().regex(/^\d{4,6}$/),
+});
+
+const faceEnrollmentSchema = z.object({
+  images: z.array(z.object({
+    kind: z.string().min(1),
+    imageRef: z.string().min(1),
+    qualityScore: z.number().min(0).max(1).optional(),
+  })).min(3).max(5),
+  appearanceMetadata: z.record(z.any()).optional(),
 });
 
 function generateAccessToken(userId: string, role: string): string {
@@ -60,14 +73,42 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
 
     const accessToken = generateAccessToken(user.id, user.role);
     const refreshToken = generateRefreshToken(user.id);
+    const deviceFingerprint = typeof req.headers['x-device-fingerprint'] === 'string'
+      ? req.headers['x-device-fingerprint']
+      : null;
 
     // Store refresh token in DB
-    await prisma.refreshToken.create({
-      data: {
-        token: refreshToken,
-        userId: user.id,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.refreshToken.create({
+        data: {
+          token: refreshToken,
+          userId: user.id,
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      if (deviceFingerprint) {
+        await tx.deviceProfile.upsert({
+          where: {
+            userId_fingerprint: {
+              userId: user.id,
+              fingerprint: deviceFingerprint,
+            },
+          },
+          update: {
+            userAgent: req.headers['user-agent'] || null,
+            lastSeenAt: new Date(),
+          },
+          create: {
+            userId: user.id,
+            fingerprint: deviceFingerprint,
+            userAgent: req.headers['user-agent'] || null,
+            platform: typeof req.headers['sec-ch-ua-platform'] === 'string' ? req.headers['sec-ch-ua-platform'] : null,
+            label: typeof req.headers['x-device-label'] === 'string' ? req.headers['x-device-label'] : null,
+            lastSeenAt: new Date(),
+          },
+        });
+      }
     });
 
     await prisma.refreshToken.deleteMany({
@@ -99,6 +140,13 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
           department: user.department,
           employeeId: user.employeeId,
           position: user.position,
+          phone: user.phone,
+          hasPin: Boolean(user.pinHash),
+          hasFaceEnrollment: Boolean(user.masterPhoto),
+          masterPhoto: user.masterPhoto,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+          appearanceProfile: user.appearanceProfile,
         },
       },
     });
@@ -193,12 +241,11 @@ router.get('/me', verifyToken, async (req: Request, res: Response, next: NextFun
         employeeId: true,
         position: true,
         phone: true,
-        startDate: true,
-        hourlyRate: true,
-        basicSalary: true,
         masterPhoto: true,
-        isActive: true,
+        pinHash: true,
+        appearanceProfile: true,
         createdAt: true,
+        updatedAt: true,
       },
     });
 
@@ -207,7 +254,147 @@ router.get('/me', verifyToken, async (req: Request, res: Response, next: NextFun
       return;
     }
 
-    res.json({ success: true, data: user });
+    res.json({
+      success: true,
+      data: {
+        ...user,
+        hasPin: Boolean(user.pinHash),
+        hasFaceEnrollment: Boolean(user.masterPhoto),
+        pinHash: undefined,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/pin/setup', verifyToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { pin } = pinSchema.parse(req.body);
+    const hashedPin = await bcrypt.hash(pin, 12);
+
+    await prisma.user.update({
+      where: { id: req.user!.id },
+      data: {
+        pinHash: hashedPin,
+        pinFailedAttempts: 0,
+        pinLockedUntil: null,
+      },
+    });
+
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: 'auth.pin.setup',
+      entityType: 'user',
+      entityId: req.user!.id,
+    });
+
+    res.json({ success: true, message: 'PIN saved successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/pin/reset/:userId', verifyToken, requireRole('admin', 'manager'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { pin } = pinSchema.parse(req.body);
+    const { userId } = req.params as Record<string, string>;
+    const hashedPin = await bcrypt.hash(pin, 12);
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        pinHash: hashedPin,
+        pinFailedAttempts: 0,
+        pinLockedUntil: null,
+      },
+    });
+
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: 'auth.pin.reset',
+      entityType: 'user',
+      entityId: userId,
+      metadata: { by: req.user!.id },
+    });
+
+    res.json({ success: true, message: 'PIN reset successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/face-enrollment', verifyToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const enrollment = await prisma.faceEnrollment.findFirst({
+      where: { userId: req.user!.id, isActive: true },
+      include: { images: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({ success: true, data: enrollment });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/face-enrollment', verifyToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = faceEnrollmentSchema.parse(req.body);
+    const activeEnrollment = await prisma.faceEnrollment.findFirst({
+      where: { userId: req.user!.id, isActive: true },
+      orderBy: { version: 'desc' },
+    });
+
+    const nextVersion = (activeEnrollment?.version || 0) + 1;
+
+    const enrollment = await prisma.$transaction(async (tx) => {
+      await tx.faceEnrollment.updateMany({
+        where: { userId: req.user!.id, isActive: true },
+        data: { isActive: false },
+      });
+
+      const created = await tx.faceEnrollment.create({
+        data: {
+          userId: req.user!.id,
+          version: nextVersion,
+          isActive: true,
+          qualityScore: data.images.reduce((sum, item) => sum + (item.qualityScore ?? 0.82), 0) / data.images.length,
+          appearanceMetadata: data.appearanceMetadata,
+          images: {
+            create: data.images.map((image) => ({
+              kind: image.kind,
+              imageRef: image.imageRef,
+              qualityScore: image.qualityScore ?? 0.82,
+            })),
+          },
+        },
+        include: { images: true },
+      });
+
+      await tx.user.update({
+        where: { id: req.user!.id },
+        data: {
+          masterPhoto: data.images[0]?.imageRef,
+          appearanceProfile: data.appearanceMetadata,
+        },
+      });
+
+      return created;
+    });
+
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: 'auth.face_enrollment.updated',
+      entityType: 'face_enrollment',
+      entityId: enrollment.id,
+      metadata: {
+        version: nextVersion,
+        imageCount: data.images.length,
+      },
+    });
+
+    res.json({ success: true, data: enrollment, message: 'Face enrollment saved' });
   } catch (error) {
     next(error);
   }

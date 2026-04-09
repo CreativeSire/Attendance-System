@@ -1,569 +1,667 @@
-import { useEffect, useState, useCallback } from 'react';
-import { format, parseISO } from 'date-fns';
-import { Plus, QrCode, ExternalLink, Megaphone, CheckCircle, XCircle, Trash2, ToggleLeft, ToggleRight, Users, Clock, UserX, CalendarOff } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { format } from 'date-fns';
+import { AlertTriangle, CheckCircle, Clock3, MapPinned, ShieldAlert, Sparkles, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/api/client';
-import { qrApi } from '@/api/qr';
+import { attendanceApi } from '@/api/attendance';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import type { EntryPoint, BroadcastMessage, AttendanceStats, AttendanceRecord, CorrectionRequest, DashboardData } from '@/types';
-import { getInitials, getStatusBg, formatTime } from '@/lib/utils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import type { AdminSettings, AttendanceRecord, OfficeZone, ReviewQueueItem } from '@/types';
 
 function Spinner() {
   return (
     <div className="flex items-center justify-center h-48">
-      <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
     </div>
   );
 }
 
-function StatCard({ label, value, icon: Icon, color, bg }: {
-  label: string; value: number | string; icon: React.ElementType; color: string; bg: string;
-}) {
-  return (
-    <div className="bg-surface border border-border rounded-xl p-5 flex items-center gap-4">
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${bg}`}>
-        <Icon size={22} className={color} />
-      </div>
-      <div>
-        <div className="text-2xl font-bold text-white">{value}</div>
-        <div className="text-gray-400 text-sm mt-0.5">{label}</div>
-      </div>
-    </div>
-  );
-}
-
-// -------- Overview Tab --------
 function OverviewTab() {
-  const [data, setData] = useState<DashboardData | null>(null);
+  const [dashboard, setDashboard] = useState<{
+    todayStats: { present: number; late: number; absent: number; onLeave: number };
+    liveFeed: AttendanceRecord[];
+    pendingLeaves: number;
+    pendingExpenses: number;
+    pendingCorrections: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get<{ data: DashboardData; success: boolean }>('/admin/dashboard')
-      .then((res) => setData((res as { data: DashboardData }).data))
-      .catch(() => toast.error('Failed to load dashboard'))
+    api.get('/admin/dashboard')
+      .then((res) => setDashboard((res as { data: typeof dashboard }).data))
+      .catch(() => toast.error('Failed to load admin dashboard.'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <Spinner />;
-  if (!data) return <div className="text-gray-500 text-center py-10">No data available</div>;
-
-  const { todayStats, liveFeed, pendingLeaves, pendingExpenses, pendingCorrections } = data;
+  if (!dashboard) return null;
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Present" value={todayStats.present} icon={Users} color="text-success" bg="bg-success/10" />
-        <StatCard label="Late" value={todayStats.late} icon={Clock} color="text-warning" bg="bg-warning/10" />
-        <StatCard label="Absent" value={todayStats.absent} icon={UserX} color="text-danger" bg="bg-danger/10" />
-        <StatCard label="On Leave" value={todayStats.onLeave} icon={CalendarOff} color="text-blue-400" bg="bg-blue-400/10" />
-      </div>
-
-      {/* Pending summary */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
-          { label: 'Pending Leaves', value: pendingLeaves, color: 'text-blue-400', bg: 'bg-blue-400/10' },
-          { label: 'Pending Expenses', value: pendingExpenses, color: 'text-warning', bg: 'bg-warning/10' },
-          { label: 'Pending Corrections', value: pendingCorrections, color: 'text-danger', bg: 'bg-danger/10' },
-        ].map((s) => (
-          <div key={s.label} className={`${s.bg} border border-current/20 rounded-xl p-4 text-center`}>
-            <div className={`text-3xl font-bold ${s.color}`}>{s.value}</div>
-            <div className="text-gray-400 text-xs mt-1">{s.label}</div>
+          { label: 'Present', value: dashboard.todayStats.present, color: 'text-success' },
+          { label: 'Late', value: dashboard.todayStats.late, color: 'text-warning' },
+          { label: 'Absent', value: dashboard.todayStats.absent, color: 'text-danger' },
+          { label: 'On Leave', value: dashboard.todayStats.onLeave, color: 'text-blue-400' },
+        ].map((card) => (
+          <div key={card.label} className="rounded-xl border border-border bg-surface p-5">
+            <div className={`text-3xl font-bold ${card.color}`}>{card.value}</div>
+            <div className="mt-1 text-sm text-gray-400">{card.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Live feed */}
-      <div className="bg-surface border border-border rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-          <h3 className="text-white font-semibold">Live Employee Feed</h3>
-          <span className="text-gray-400 text-sm">{liveFeed?.length ?? 0} checked in</span>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="rounded-xl border border-border bg-surface p-5">
+          <p className="text-sm font-medium text-white">Pending leaves</p>
+          <p className="mt-2 text-3xl font-bold text-blue-400">{dashboard.pendingLeaves}</p>
         </div>
-        {!liveFeed || liveFeed.length === 0 ? (
-          <div className="p-10 text-center text-gray-500">No one has checked in today</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-xs text-gray-500 uppercase tracking-wider border-b border-border">
-                  <th className="px-5 py-3 text-left">Employee</th>
-                  <th className="px-5 py-3 text-left">Dept</th>
-                  <th className="px-5 py-3 text-left">Clock In</th>
-                  <th className="px-5 py-3 text-left">Status</th>
+        <div className="rounded-xl border border-border bg-surface p-5">
+          <p className="text-sm font-medium text-white">Pending expenses</p>
+          <p className="mt-2 text-3xl font-bold text-warning">{dashboard.pendingExpenses}</p>
+        </div>
+        <div className="rounded-xl border border-border bg-surface p-5">
+          <p className="text-sm font-medium text-white">Pending corrections</p>
+          <p className="mt-2 text-3xl font-bold text-danger">{dashboard.pendingCorrections}</p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-surface overflow-hidden">
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="font-semibold text-white">Live attendance feed</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-[0.2em] text-gray-500">
+                <th className="px-5 py-3">Employee</th>
+                <th className="px-5 py-3">Department</th>
+                <th className="px-5 py-3">Clock in</th>
+                <th className="px-5 py-3">Review</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dashboard.liveFeed.map((record) => (
+                <tr key={record.id} className="border-b border-border/50">
+                  <td className="px-5 py-3 text-sm text-white">{record.user?.name}</td>
+                  <td className="px-5 py-3 text-sm text-gray-400">{record.user?.department}</td>
+                  <td className="px-5 py-3 text-sm text-gray-300">{record.clockIn ? format(new Date(record.clockIn), 'HH:mm:ss') : '--'}</td>
+                  <td className="px-5 py-3 text-sm">
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                      record.reviewDecision === 'flagged'
+                        ? 'bg-warning/10 text-warning'
+                        : record.reviewDecision === 'blocked'
+                          ? 'bg-danger/10 text-danger'
+                          : 'bg-success/10 text-success'
+                    }`}>
+                      {record.reviewDecision || 'approved'}
+                    </span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {liveFeed.map((rec: AttendanceRecord) => (
-                  <tr key={rec.id} className="border-b border-border/50 hover:bg-surface-2/50">
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 gradient-accent rounded-full flex items-center justify-center text-white text-xs font-bold">
-                          {getInitials(rec.user?.name ?? '?')}
-                        </div>
-                        <span className="text-white text-sm">{rec.user?.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-gray-400 text-sm">{rec.user?.department}</td>
-                    <td className="px-5 py-3 text-gray-300 text-sm font-mono">{rec.clockIn ? formatTime(rec.clockIn) : '--'}</td>
-                    <td className="px-5 py-3">
-                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${getStatusBg(rec.status)}`}>{rec.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 }
 
-// -------- Entry Points Tab --------
-function AddEntryPointDialog({ open, onClose, onSuccess }: { open: boolean; onClose: () => void; onSuccess: () => void }) {
-  const [name, setName] = useState('');
-  const [location, setLocation] = useState('');
+function SettingsTab() {
+  const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim() || !location.trim()) { toast.error('Name and location are required'); return; }
-    setSaving(true);
-    try {
-      await qrApi.createEntryPoint({ name: name.trim(), location: location.trim() });
-      toast.success('Entry point created');
-      setName(''); setLocation('');
-      onSuccess(); onClose();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create entry point');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="bg-surface border-border text-white max-w-sm">
-        <DialogHeader><DialogTitle>Add Entry Point</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
-          <div className="space-y-2">
-            <Label className="text-gray-300">Name <span className="text-danger">*</span></Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Main Entrance" className="bg-surface-2 border-border text-white placeholder:text-gray-500" />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-gray-300">Location <span className="text-danger">*</span></Label>
-            <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Ground Floor, Block A" className="bg-surface-2 border-border text-white placeholder:text-gray-500" />
-          </div>
-          <Button type="submit" className="w-full gradient-accent text-white" isLoading={saving}>Create</Button>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function QRModal({ entryPoint, open, onClose }: { entryPoint: EntryPoint | null; open: boolean; onClose: () => void }) {
-  const [qrUrl, setQrUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const load = useCallback(async () => {
+    const res = await api.get('/admin/settings');
+    setSettings((res as { data: AdminSettings }).data);
+  }, []);
 
   useEffect(() => {
-    if (open && entryPoint) {
-      setLoading(true);
-      qrApi.getEntryQR(entryPoint.id)
-        .then((res) => setQrUrl((res as { data: { qrDataUrl: string } }).data?.qrDataUrl ?? null))
-        .catch(() => toast.error('Failed to load QR'))
-        .finally(() => setLoading(false));
+    load().catch(() => toast.error('Failed to load settings.'));
+  }, [load]);
+
+  if (!settings) return <Spinner />;
+
+  const office = settings.officeLocations[0];
+
+  const save = async () => {
+    if (!office) {
+      toast.error('At least one office location is required.');
+      return;
     }
-  }, [open, entryPoint]);
 
-  return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="bg-surface border-border text-white max-w-sm text-center">
-        <DialogHeader><DialogTitle>{entryPoint?.name} QR Code</DialogTitle></DialogHeader>
-        {loading ? <Spinner /> : qrUrl ? (
-          <div className="flex flex-col items-center gap-3 pt-2">
-            <img src={qrUrl} alt="QR Code" className="w-48 h-48 rounded-xl" />
-            <p className="text-gray-400 text-xs">Scan with Dala app to clock in at {entryPoint?.location}</p>
-          </div>
-        ) : <p className="text-gray-500 py-8">QR code not available</p>}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function EntryPointsTab() {
-  const [entryPoints, setEntryPoints] = useState<EntryPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [addOpen, setAddOpen] = useState(false);
-  const [qrTarget, setQrTarget] = useState<EntryPoint | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await qrApi.getEntryPoints();
-      setEntryPoints(((res as { data: EntryPoint[] }).data) ?? []);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const toggleActive = async (ep: EntryPoint) => {
-    try {
-      await qrApi.updateEntryPoint(ep.id, { active: !ep.active });
-      toast.success(`Entry point ${ep.active ? 'deactivated' : 'activated'}`);
-      load();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update');
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this entry point?')) return;
-    try {
-      await qrApi.deleteEntryPoint(id);
-      toast.success('Entry point deleted');
-      load();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete');
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={() => setAddOpen(true)} className="gradient-accent text-white">
-          <Plus size={16} /> Add Entry Point
-        </Button>
-      </div>
-
-      {loading ? <Spinner /> : entryPoints.length === 0 ? (
-        <div className="bg-surface border border-border rounded-xl p-10 text-center text-gray-500">
-          <QrCode size={36} className="mx-auto mb-3 opacity-30" />
-          <p>No entry points configured</p>
-        </div>
-      ) : (
-        <div className="bg-surface border border-border rounded-xl overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="text-xs text-gray-500 uppercase tracking-wider border-b border-border">
-                <th className="px-5 py-3 text-left">Name</th>
-                <th className="px-5 py-3 text-left">Location</th>
-                <th className="px-5 py-3 text-center">Active</th>
-                <th className="px-5 py-3 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entryPoints.map((ep) => (
-                <tr key={ep.id} className="border-b border-border/50 hover:bg-surface-2/50">
-                  <td className="px-5 py-3 text-white font-medium text-sm">{ep.name}</td>
-                  <td className="px-5 py-3 text-gray-400 text-sm">{ep.location}</td>
-                  <td className="px-5 py-3 text-center">
-                    <button onClick={() => toggleActive(ep)} className="hover:opacity-80 transition-opacity">
-                      {ep.active
-                        ? <ToggleRight size={24} className="text-success" />
-                        : <ToggleLeft size={24} className="text-gray-500" />}
-                    </button>
-                  </td>
-                  <td className="px-5 py-3">
-                    <div className="flex items-center justify-center gap-2">
-                      <a href={`/entry/${ep.id}`} target="_blank" rel="noopener noreferrer"
-                        className="text-accent hover:underline text-xs flex items-center gap-1">
-                        <ExternalLink size={12} /> Open Screen
-                      </a>
-                      <button onClick={() => setQrTarget(ep)} className="text-gray-400 hover:text-white text-xs flex items-center gap-1 ml-2">
-                        <QrCode size={12} /> QR
-                      </button>
-                      <button onClick={() => handleDelete(ep.id)} className="text-danger hover:text-danger/80 ml-2">
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <AddEntryPointDialog open={addOpen} onClose={() => setAddOpen(false)} onSuccess={load} />
-      <QRModal entryPoint={qrTarget} open={!!qrTarget} onClose={() => setQrTarget(null)} />
-    </div>
-  );
-}
-
-// -------- Broadcasts Tab --------
-function SendBroadcastDialog({ open, onClose, onSuccess }: { open: boolean; onClose: () => void; onSuccess: () => void }) {
-  const [title, setTitle] = useState('');
-  const [message, setMessage] = useState('');
-  const [target, setTarget] = useState('ALL');
-  const [expiresIn, setExpiresIn] = useState('24');
-  const [saving, setSaving] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim() || !message.trim()) { toast.error('Title and message are required'); return; }
     setSaving(true);
     try {
-      const expiresAt = expiresIn !== 'never'
-        ? new Date(Date.now() + parseInt(expiresIn) * 60 * 60 * 1000).toISOString()
-        : undefined;
-      await api.post('/broadcasts', {
-        title: title.trim(),
-        message: message.trim(),
-        targetDepartment: target === 'ALL' ? undefined : target,
-        expiresAt,
+      await api.patch('/admin/settings', {
+        workStartTime: settings.appConfig.workStartTime,
+        gracePeriodMinutes: settings.appConfig.gracePeriodMinutes,
+        requireLocation: settings.appConfig.requireLocation,
+        requireFaceCapture: settings.appConfig.requireFaceCapture,
+        requireLiveness: settings.appConfig.requireLiveness,
+        requireEmployeePin: settings.appConfig.requireEmployeePin,
+        office,
       });
-      toast.success('Broadcast sent!');
-      setTitle(''); setMessage(''); setTarget('ALL'); setExpiresIn('24');
-      onSuccess(); onClose();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to send broadcast');
+      toast.success('Settings updated.');
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save settings.');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="bg-surface border-border text-white max-w-md">
-        <DialogHeader><DialogTitle>Send Broadcast</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
-          <div className="space-y-2">
-            <Label className="text-gray-300">Title <span className="text-danger">*</span></Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Broadcast title..." className="bg-surface-2 border-border text-white placeholder:text-gray-500" />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-gray-300">Message <span className="text-danger">*</span></Label>
-            <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Your message..." rows={4}
-              className="w-full bg-surface-2 border border-border rounded-lg p-3 text-white placeholder:text-gray-500 text-sm resize-none focus:outline-none focus:border-accent" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label className="text-gray-300">Target</Label>
-              <select value={target} onChange={(e) => setTarget(e.target.value)}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-accent">
-                <option value="ALL">All Employees</option>
-                {['Engineering', 'Marketing', 'Sales', 'Finance', 'HR', 'Operations'].map((d) => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-gray-300">Expires In</Label>
-              <select value={expiresIn} onChange={(e) => setExpiresIn(e.target.value)}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-accent">
-                <option value="1">1 Hour</option>
-                <option value="4">4 Hours</option>
-                <option value="24">24 Hours</option>
-                <option value="never">Never</option>
-              </select>
-            </div>
-          </div>
-          <Button type="submit" className="w-full gradient-accent text-white" isLoading={saving}>
-            <Megaphone size={16} /> Send Broadcast
-          </Button>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function BroadcastsTab() {
-  const [broadcasts, setBroadcasts] = useState<BroadcastMessage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [sendOpen, setSendOpen] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.get<{ data: BroadcastMessage[] }>('/broadcasts');
-      setBroadcasts(((res as { data: BroadcastMessage[] }).data) ?? []);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const handleDelete = async (id: string) => {
-    try {
-      await api.del(`/broadcasts/${id}`);
-      toast.success('Broadcast deleted');
-      load();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete');
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={() => setSendOpen(true)} className="gradient-accent text-white">
-          <Megaphone size={16} /> Send Broadcast
-        </Button>
-      </div>
-
-      {loading ? <Spinner /> : broadcasts.length === 0 ? (
-        <div className="bg-surface border border-border rounded-xl p-10 text-center text-gray-500">
-          <Megaphone size={36} className="mx-auto mb-3 opacity-30" />
-          <p>No active broadcasts</p>
+    <div className="space-y-5">
+      <div className="rounded-xl border border-border bg-surface p-5 space-y-4">
+        <div>
+          <h3 className="font-semibold text-white">Attendance policy</h3>
+          <p className="mt-1 text-sm text-gray-400">Set the baseline rules used by PIN, liveness, location, and review logic.</p>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {broadcasts.map((b) => (
-            <div key={b.id} className="bg-surface border border-border rounded-xl p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 bg-accent/10 rounded-lg flex items-center justify-center shrink-0">
-                    <Megaphone size={16} className="text-accent" />
-                  </div>
-                  <div>
-                    <p className="text-white font-medium">{b.title}</p>
-                    <p className="text-gray-400 text-sm mt-0.5 line-clamp-2">{b.message}</p>
-                    <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                      <span>By: {b.creator?.name ?? 'System'}</span>
-                      {b.targetDepartment && <span>→ {b.targetDepartment}</span>}
-                      {b.expiresAt && <span>Expires: {format(parseISO(b.expiresAt), 'MMM d, HH:mm')}</span>}
-                    </div>
-                  </div>
-                </div>
-                <button onClick={() => handleDelete(b.id)} className="text-danger hover:text-danger/80 mt-0.5 shrink-0">
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label className="text-gray-300">Work start time</Label>
+            <Input
+              value={settings.appConfig.workStartTime}
+              onChange={(event) => setSettings((current) => current ? {
+                ...current,
+                appConfig: { ...current.appConfig, workStartTime: event.target.value },
+              } : current)}
+              className="bg-surface-2 border-border text-white"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-gray-300">Grace period (minutes)</Label>
+            <Input
+              type="number"
+              value={settings.appConfig.gracePeriodMinutes}
+              onChange={(event) => setSettings((current) => current ? {
+                ...current,
+                appConfig: { ...current.appConfig, gracePeriodMinutes: Number(event.target.value) || 0 },
+              } : current)}
+              className="bg-surface-2 border-border text-white"
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          {[
+            { key: 'requireEmployeePin', label: 'Require employee PIN' },
+            { key: 'requireFaceCapture', label: 'Require face capture' },
+            { key: 'requireLiveness', label: 'Require liveness' },
+            { key: 'requireLocation', label: 'Require live location' },
+          ].map((item) => (
+            <label key={item.key} className="flex items-center justify-between rounded-xl border border-border bg-surface-2/60 px-4 py-3 text-sm text-gray-300">
+              {item.label}
+              <input
+                type="checkbox"
+                checked={Boolean(settings.appConfig[item.key as keyof AdminSettings['appConfig']])}
+                onChange={(event) => setSettings((current) => current ? {
+                  ...current,
+                  appConfig: {
+                    ...current.appConfig,
+                    [item.key]: event.target.checked,
+                  },
+                } : current)}
+              />
+            </label>
           ))}
         </div>
-      )}
+      </div>
 
-      <SendBroadcastDialog open={sendOpen} onClose={() => setSendOpen(false)} onSuccess={load} />
+      {office ? (
+        <div className="rounded-xl border border-border bg-surface p-5 space-y-4">
+          <div>
+            <h3 className="font-semibold text-white">Office coordinates</h3>
+            <p className="mt-1 text-sm text-gray-400">These are the official coordinates your backend uses for zone comparison and distance scoring.</p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-gray-300">Office name</Label>
+              <Input
+                value={office.name}
+                onChange={(event) => setSettings((current) => current ? {
+                  ...current,
+                  officeLocations: [{ ...current.officeLocations[0], name: event.target.value }],
+                } : current)}
+                className="bg-surface-2 border-border text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Office address</Label>
+              <Input
+                value={office.address}
+                onChange={(event) => setSettings((current) => current ? {
+                  ...current,
+                  officeLocations: [{ ...current.officeLocations[0], address: event.target.value }],
+                } : current)}
+                className="bg-surface-2 border-border text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Latitude</Label>
+              <Input
+                type="number"
+                value={office.latitude}
+                onChange={(event) => setSettings((current) => current ? {
+                  ...current,
+                  officeLocations: [{ ...current.officeLocations[0], latitude: Number(event.target.value) || 0 }],
+                } : current)}
+                className="bg-surface-2 border-border text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Longitude</Label>
+              <Input
+                type="number"
+                value={office.longitude}
+                onChange={(event) => setSettings((current) => current ? {
+                  ...current,
+                  officeLocations: [{ ...current.officeLocations[0], longitude: Number(event.target.value) || 0 }],
+                } : current)}
+                className="bg-surface-2 border-border text-white"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label className="text-gray-300">Default office radius (meters)</Label>
+              <Input
+                type="number"
+                value={office.radiusMeters}
+                onChange={(event) => setSettings((current) => current ? {
+                  ...current,
+                  officeLocations: [{ ...current.officeLocations[0], radiusMeters: Number(event.target.value) || 0 }],
+                } : current)}
+                className="bg-surface-2 border-border text-white"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <Button onClick={save} isLoading={saving}>
+        Save settings
+      </Button>
     </div>
   );
 }
 
-// -------- Corrections Tab --------
-function CorrectionsTab() {
-  const [corrections, setCorrections] = useState<CorrectionRequest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [rejectNote, setRejectNote] = useState('');
-  const [rejectTarget, setRejectTarget] = useState<string | null>(null);
+function ZonesTab() {
+  const [zones, setZones] = useState<OfficeZone[]>([]);
+  const [settings, setSettings] = useState<AdminSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    officeLocationId: '',
+    name: '',
+    type: 'work_zone' as OfficeZone['type'],
+    centerLat: '',
+    centerLng: '',
+    radiusMeters: '',
+    riskWeight: '20',
+  });
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const [zonesRes, settingsRes] = await Promise.all([
+      attendanceApi.getZones(),
+      api.get('/admin/settings'),
+    ]);
+    setZones((zonesRes as { data: OfficeZone[] }).data || []);
+    const settingsPayload = (settingsRes as { data: AdminSettings }).data;
+    setSettings(settingsPayload);
+    if (!form.officeLocationId && settingsPayload.officeLocations[0]) {
+      setForm((current) => ({ ...current, officeLocationId: settingsPayload.officeLocations[0].id }));
+    }
+  }, [form.officeLocationId]);
+
+  useEffect(() => {
+    load().catch(() => toast.error('Failed to load office zones.'));
+  }, [load]);
+
+  const createZone = async () => {
+    if (!form.officeLocationId || !form.name.trim()) {
+      toast.error('Office and zone name are required.');
+      return;
+    }
+
+    setSaving(true);
     try {
-      const res = await api.get<{ data: CorrectionRequest[] }>('/admin/corrections');
-      setCorrections(((res as { data: CorrectionRequest[] }).data) ?? []);
+      await attendanceApi.createZone({
+        officeLocationId: form.officeLocationId,
+        name: form.name.trim(),
+        type: form.type,
+        centerLat: Number(form.centerLat),
+        centerLng: Number(form.centerLng),
+        radiusMeters: Number(form.radiusMeters),
+        riskWeight: Number(form.riskWeight) || 0,
+        allowedForAttendance: form.type !== 'restricted_zone',
+      });
+      toast.success('Zone created.');
+      setForm((current) => ({ ...current, name: '', centerLat: '', centerLng: '', radiusMeters: '', riskWeight: '20' }));
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create zone.');
     } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const handleApprove = async (id: string) => {
-    try {
-      await api.patch(`/admin/corrections/${id}`, { status: 'approved' });
-      toast.success('Correction approved');
-      load();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed');
+      setSaving(false);
     }
   };
 
-  const handleReject = async () => {
-    if (!rejectTarget) return;
-    try {
-      await api.patch(`/admin/corrections/${rejectTarget}`, { status: 'rejected', reviewNote: rejectNote });
-      toast.success('Correction rejected');
-      setRejectTarget(null); setRejectNote('');
-      load();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed');
-    }
-  };
-
-  const pending = corrections.filter((c) => c.status === 'PENDING');
+  if (!settings) return <Spinner />;
 
   return (
-    <div className="space-y-4">
-      {loading ? <Spinner /> : pending.length === 0 ? (
-        <div className="bg-surface border border-border rounded-xl p-10 text-center text-gray-500">
-          <CheckCircle size={36} className="mx-auto mb-3 text-success opacity-50" />
-          <p>No pending corrections</p>
+    <div className="space-y-5">
+      <div className="rounded-xl border border-border bg-surface p-5 space-y-4">
+        <div>
+          <h3 className="font-semibold text-white">Create verification zones</h3>
+          <p className="mt-1 text-sm text-gray-400">Map work zones, entry zones, and staff quarters so nearby staff housing is not treated as the same thing as the work building.</p>
         </div>
-      ) : (
-        <div className="bg-surface border border-border rounded-xl overflow-hidden">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label className="text-gray-300">Office</Label>
+            <select
+              value={form.officeLocationId}
+              onChange={(event) => setForm((current) => ({ ...current, officeLocationId: event.target.value }))}
+              className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-white focus:border-accent focus:outline-none"
+            >
+              {settings.officeLocations.map((office) => (
+                <option key={office.id} value={office.id}>{office.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Zone type</Label>
+            <select
+              value={form.type}
+              onChange={(event) => setForm((current) => ({ ...current, type: event.target.value as OfficeZone['type'] }))}
+              className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-white focus:border-accent focus:outline-none"
+            >
+              <option value="entry_zone">Entry zone</option>
+              <option value="work_zone">Work zone</option>
+              <option value="staff_quarters_zone">Staff quarters zone</option>
+              <option value="admin_zone">Admin zone</option>
+              <option value="warehouse_zone">Warehouse zone</option>
+              <option value="restricted_zone">Restricted zone</option>
+            </select>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label className="text-gray-300">Zone name</Label>
+            <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Center latitude</Label>
+            <Input value={form.centerLat} onChange={(event) => setForm((current) => ({ ...current, centerLat: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Center longitude</Label>
+            <Input value={form.centerLng} onChange={(event) => setForm((current) => ({ ...current, centerLng: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Radius (meters)</Label>
+            <Input value={form.radiusMeters} onChange={(event) => setForm((current) => ({ ...current, radiusMeters: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Risk weight</Label>
+            <Input value={form.riskWeight} onChange={(event) => setForm((current) => ({ ...current, riskWeight: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+        </div>
+        <Button onClick={createZone} isLoading={saving}>Create zone</Button>
+      </div>
+
+      <div className="rounded-xl border border-border bg-surface overflow-hidden">
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="font-semibold text-white">Current zones</h3>
+        </div>
+        <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="text-xs text-gray-500 uppercase tracking-wider border-b border-border">
-                <th className="px-5 py-3 text-left">Employee</th>
-                <th className="px-5 py-3 text-left">Original Clock-in</th>
-                <th className="px-5 py-3 text-left">Requested Clock-in</th>
-                <th className="px-5 py-3 text-left">Reason</th>
-                <th className="px-5 py-3 text-left">Actions</th>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-[0.2em] text-gray-500">
+                <th className="px-5 py-3">Zone</th>
+                <th className="px-5 py-3">Type</th>
+                <th className="px-5 py-3">Radius</th>
+                <th className="px-5 py-3">Risk weight</th>
               </tr>
             </thead>
             <tbody>
-              {pending.map((c) => (
-                <tr key={c.id} className="border-b border-border/50 hover:bg-surface-2/50">
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 gradient-accent rounded-full flex items-center justify-center text-white text-xs font-bold">
-                        {getInitials(c.user?.name ?? '?')}
-                      </div>
-                      <div>
-                        <p className="text-white text-sm">{c.user?.name}</p>
-                        <p className="text-gray-500 text-xs">{c.user?.department}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-3 text-gray-400 text-sm font-mono">
-                    {c.attendance?.clockIn ? formatTime(c.attendance.clockIn) : '--'}
-                  </td>
-                  <td className="px-5 py-3 text-accent text-sm font-mono">
-                    {c.requestedClockIn ? formatTime(c.requestedClockIn) : '--'}
-                  </td>
-                  <td className="px-5 py-3 text-gray-400 text-sm max-w-xs">
-                    <span className="line-clamp-2">{c.reason}</span>
-                  </td>
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="success" onClick={() => handleApprove(c.id)}>
-                        <CheckCircle size={12} /> Approve
-                      </Button>
-                      <Button size="sm" variant="destructive" onClick={() => setRejectTarget(c.id)}>
-                        <XCircle size={12} /> Reject
-                      </Button>
-                    </div>
-                  </td>
+              {zones.map((zone) => (
+                <tr key={zone.id} className="border-b border-border/50">
+                  <td className="px-5 py-3 text-sm text-white">{zone.name}</td>
+                  <td className="px-5 py-3 text-sm text-gray-300">{zone.type}</td>
+                  <td className="px-5 py-3 text-sm text-gray-300">{zone.radiusMeters}m</td>
+                  <td className="px-5 py-3 text-sm text-gray-300">{zone.riskWeight}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      )}
-
-      <Dialog open={!!rejectTarget} onOpenChange={() => { setRejectTarget(null); setRejectNote(''); }}>
-        <DialogContent className="bg-surface border-border text-white max-w-sm">
-          <DialogHeader><DialogTitle>Reject Correction</DialogTitle></DialogHeader>
-          <div className="space-y-3 pt-2">
-            <textarea value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} placeholder="Reason for rejection (optional)..." rows={3}
-              className="w-full bg-surface-2 border border-border rounded-lg p-3 text-white placeholder:text-gray-500 text-sm resize-none focus:outline-none focus:border-accent" />
-            <Button onClick={handleReject} variant="destructive" className="w-full">Confirm Reject</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      </div>
     </div>
   );
 }
 
-// -------- Main --------
+function ReviewQueueTab() {
+  const [queue, setQueue] = useState<ReviewQueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await attendanceApi.getReviewQueue();
+      setQueue((res as { data: ReviewQueueItem[] }).data || []);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load().catch(() => toast.error('Failed to load review queue.'));
+  }, [load]);
+
+  const update = async (id: string, status: 'approved' | 'rejected' | 'escalated') => {
+    setUpdatingId(id);
+    try {
+      await attendanceApi.updateReviewQueue(id, { status });
+      toast.success(`Review item ${status}.`);
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update review queue.');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div className="space-y-4">
+      {queue.length === 0 ? (
+        <div className="rounded-xl border border-border bg-surface p-10 text-center text-gray-500">
+          No suspicious events need review right now.
+        </div>
+      ) : queue.map((item) => (
+        <div key={item.id} className="rounded-xl border border-border bg-surface p-5 space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <ShieldAlert size={16} className="text-warning" />
+                <p className="font-semibold text-white">{item.user?.name || item.userId}</p>
+              </div>
+              <p className="text-sm text-gray-400">{item.recommendation}</p>
+              <p className="text-xs text-gray-500">{item.user?.department || 'Unknown department'} • Logged {format(new Date(item.createdAt), 'MMM d, HH:mm')}</p>
+            </div>
+            <div className="rounded-full bg-warning/10 px-3 py-1 text-sm font-medium text-warning">
+              Risk {item.riskScore}
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-[1fr_0.8fr]">
+            <div className="rounded-xl border border-border bg-surface-2/70 p-4">
+              <p className="text-sm font-medium text-white">Risk reasons</p>
+              <ul className="mt-3 space-y-2 text-sm text-gray-300">
+                {item.reasons.map((reason) => (
+                  <li key={reason}>• {reason}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="rounded-xl border border-border bg-surface-2/70 p-4 space-y-3">
+              <p className="text-sm font-medium text-white">AI summary</p>
+              <p className="text-sm text-gray-300">{item.attendanceVerification?.aiSummary || 'Rule-based risk summary only for now.'}</p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="success" isLoading={updatingId === item.id} onClick={() => update(item.id, 'approved')}>
+              <CheckCircle size={14} /> Approve
+            </Button>
+            <Button size="sm" variant="warning" isLoading={updatingId === item.id} onClick={() => update(item.id, 'escalated')}>
+              <AlertTriangle size={14} /> Escalate
+            </Button>
+            <Button size="sm" variant="destructive" isLoading={updatingId === item.id} onClick={() => update(item.id, 'rejected')}>
+              <ShieldAlert size={14} /> Reject
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AssistedClockInTab() {
+  const [users, setUsers] = useState<Array<{ id: string; name: string; employeeId?: string; department?: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    employeeId: '',
+    reasonCode: 'device_failure',
+    note: '',
+    workMode: 'office' as 'office' | 'wfh' | 'field' | 'client_site',
+    lat: '',
+    lng: '',
+    accuracy: '',
+  });
+
+  useEffect(() => {
+    api.get('/employees')
+      .then((res) => {
+        const rows = ((res as { data: Array<{ id: string; name: string; employeeId?: string; department?: string }> }).data) || [];
+        setUsers(rows);
+        if (!form.employeeId && rows[0]) {
+          setForm((current) => ({ ...current, employeeId: rows[0].id }));
+        }
+      })
+      .catch(() => toast.error('Failed to load employees for assisted clock-in.'))
+      .finally(() => setLoading(false));
+  }, [form.employeeId]);
+
+  const submit = async () => {
+    if (!form.employeeId) {
+      toast.error('Choose an employee first.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await attendanceApi.assistedClockIn({
+        employeeId: form.employeeId,
+        reasonCode: form.reasonCode,
+        note: form.note || undefined,
+        workMode: form.workMode,
+        lat: form.lat ? Number(form.lat) : undefined,
+        lng: form.lng ? Number(form.lng) : undefined,
+        accuracy: form.accuracy ? Number(form.accuracy) : undefined,
+      });
+      toast.success('Admin-assisted clock-in created.');
+      setForm((current) => ({ ...current, note: '', lat: '', lng: '', accuracy: '' }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create assisted clock-in.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-xl border border-border bg-surface p-5 space-y-4">
+        <div>
+          <h3 className="font-semibold text-white">Admin-assisted fallback</h3>
+          <p className="mt-1 text-sm text-gray-400">Use this only when the full PIN, face, liveness, and location flow cannot complete. Every assisted record is flagged and auditable.</p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label className="text-gray-300">Employee</Label>
+            <select value={form.employeeId} onChange={(event) => setForm((current) => ({ ...current, employeeId: event.target.value }))} className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-white focus:border-accent focus:outline-none">
+              {users.map((user) => (
+                <option key={user.id} value={user.id}>{user.name} {user.department ? `(${user.department})` : ''}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Reason code</Label>
+            <select value={form.reasonCode} onChange={(event) => setForm((current) => ({ ...current, reasonCode: event.target.value }))} className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-white focus:border-accent focus:outline-none">
+              <option value="device_failure">Device failure</option>
+              <option value="camera_unavailable">Camera unavailable</option>
+              <option value="network_issue">Network issue</option>
+              <option value="emergency_override">Emergency override</option>
+              <option value="onboarding_day">Onboarding day</option>
+              <option value="supervisor_authorized">Supervisor authorized</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Work mode</Label>
+            <select value={form.workMode} onChange={(event) => setForm((current) => ({ ...current, workMode: event.target.value as typeof current.workMode }))} className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-white focus:border-accent focus:outline-none">
+              <option value="office">Office</option>
+              <option value="wfh">WFH</option>
+              <option value="field">Field</option>
+              <option value="client_site">Client site</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Note</Label>
+            <Input value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Latitude (optional)</Label>
+            <Input value={form.lat} onChange={(event) => setForm((current) => ({ ...current, lat: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Longitude (optional)</Label>
+            <Input value={form.lng} onChange={(event) => setForm((current) => ({ ...current, lng: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label className="text-gray-300">Accuracy meters (optional)</Label>
+            <Input value={form.accuracy} onChange={(event) => setForm((current) => ({ ...current, accuracy: event.target.value }))} className="bg-surface-2 border-border text-white" />
+          </div>
+        </div>
+        <Button onClick={submit} isLoading={saving}>
+          <UserCog size={14} />
+          Create assisted clock-in
+        </Button>
+      </div>
+
+      <div className="rounded-xl border border-warning/20 bg-warning/10 p-5">
+        <div className="flex items-start gap-3">
+          <Clock3 size={18} className="mt-0.5 text-warning" />
+          <div className="space-y-2 text-sm text-gray-200">
+            <p className="font-semibold text-white">Use assisted clock-in sparingly</p>
+            <ul className="space-y-1 text-sm text-gray-300">
+              <li>• Every assisted record is automatically flagged for review.</li>
+              <li>• The review queue stores the override reason, note, admin ID, and risk context.</li>
+              <li>• Override frequency should be monitored later for payroll and abuse detection.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Admin() {
   const { user } = useAuth();
 
@@ -571,8 +669,8 @@ export default function Admin() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <p className="text-gray-500 text-lg">Access Restricted</p>
-          <p className="text-gray-600 text-sm mt-1">This page is only available to administrators.</p>
+          <p className="text-lg text-gray-500">Access restricted</p>
+          <p className="mt-1 text-sm text-gray-600">Only admins can manage zones, overrides, and the suspicious review queue.</p>
         </div>
       </div>
     );
@@ -581,22 +679,38 @@ export default function Admin() {
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-2xl font-bold text-white">Admin Panel</h1>
-        <p className="text-gray-400 text-sm mt-1">System management and configuration</p>
+        <h1 className="text-2xl font-bold text-white">Admin control center</h1>
+        <p className="mt-1 text-sm text-gray-400">Manage zones, security thresholds, suspicious reviews, and admin-assisted attendance while the system transitions away from QR.</p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex items-center gap-2 text-accent"><MapPinned size={16} /><span className="text-sm font-medium">Zone intelligence</span></div>
+          <p className="mt-2 text-sm text-gray-400">Map entry zones, work zones, and staff quarters so location is interpreted correctly.</p>
+        </div>
+        <div className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex items-center gap-2 text-accent"><ShieldAlert size={16} /><span className="text-sm font-medium">Review automation</span></div>
+          <p className="mt-2 text-sm text-gray-400">Flagged events surface with rule-based and AI-style summaries to help managers decide quickly.</p>
+        </div>
+        <div className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex items-center gap-2 text-accent"><Sparkles size={16} /><span className="text-sm font-medium">Resilient fallback</span></div>
+          <p className="mt-2 text-sm text-gray-400">Admin-assisted clock-in keeps operations moving without silently weakening the audit trail.</p>
+        </div>
       </div>
 
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="entry-points">Entry Points</TabsTrigger>
-          <TabsTrigger value="broadcasts">Broadcasts</TabsTrigger>
-          <TabsTrigger value="corrections">Corrections</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger value="zones">Zones</TabsTrigger>
+          <TabsTrigger value="review-queue">Review Queue</TabsTrigger>
+          <TabsTrigger value="assisted">Assisted Clock-In</TabsTrigger>
         </TabsList>
-
         <TabsContent value="overview"><OverviewTab /></TabsContent>
-        <TabsContent value="entry-points"><EntryPointsTab /></TabsContent>
-        <TabsContent value="broadcasts"><BroadcastsTab /></TabsContent>
-        <TabsContent value="corrections"><CorrectionsTab /></TabsContent>
+        <TabsContent value="settings"><SettingsTab /></TabsContent>
+        <TabsContent value="zones"><ZonesTab /></TabsContent>
+        <TabsContent value="review-queue"><ReviewQueueTab /></TabsContent>
+        <TabsContent value="assisted"><AssistedClockInTab /></TabsContent>
       </Tabs>
     </div>
   );

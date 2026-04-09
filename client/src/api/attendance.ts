@@ -1,6 +1,17 @@
 import { api } from './client';
-import { normalizeAttendance } from './normalizers';
-import type { AttendanceRecord, AttendanceStats, ApiResponse, PaginatedResponse, CorrectionRequest } from '@/types';
+import { normalizeAttendance, normalizeReviewQueueItem } from './normalizers';
+import { getDeviceFingerprint, getDeviceLabel } from '@/lib/device';
+import type {
+  AttendanceRecord,
+  AttendanceStats,
+  ApiResponse,
+  PaginatedResponse,
+  CorrectionRequest,
+  LivenessResponse,
+  OfficeZone,
+  ReviewQueueItem,
+  VerificationSession,
+} from '@/types';
 
 export interface ClockInData {
   qrToken: string;
@@ -19,6 +30,22 @@ export interface ClockOutData {
   accuracy?: number;
 }
 
+export interface VerificationStartData {
+  pin: string;
+  workMode?: 'office' | 'wfh' | 'field' | 'client_site';
+  lat?: number;
+  lng?: number;
+  accuracy?: number;
+}
+
+export interface VerificationCompleteData {
+  sessionId: string;
+  facePhoto: string;
+  lateReason?: string;
+  mood?: string;
+  livenessResponses: LivenessResponse[];
+}
+
 export const attendanceApi = {
   clockIn: async (data: ClockInData) => {
     const res = await api.post<ApiResponse<AttendanceRecord>>('/attendance/clock-in', data);
@@ -27,6 +54,21 @@ export const attendanceApi = {
 
   clockOut: async (data: ClockOutData) => {
     const res = await api.post<ApiResponse<AttendanceRecord>>('/attendance/clock-out', data);
+    return { ...res, data: normalizeAttendance(res.data as unknown as Record<string, unknown>) };
+  },
+
+  startVerification: async (data: VerificationStartData) => {
+    const res = await api.post<ApiResponse<VerificationSession>>('/attendance/verification/start', {
+      ...data,
+      deviceFingerprint: getDeviceFingerprint(),
+      deviceLabel: getDeviceLabel(),
+      platform: typeof navigator !== 'undefined' ? navigator.platform : 'unknown',
+    });
+    return res;
+  },
+
+  completeVerification: async (data: VerificationCompleteData) => {
+    const res = await api.post<ApiResponse<AttendanceRecord>>('/attendance/verification/complete', data);
     return { ...res, data: normalizeAttendance(res.data as unknown as Record<string, unknown>) };
   },
 
@@ -107,4 +149,44 @@ export const attendanceApi = {
       attendanceRate: number;
     }>>(`/attendance/my-stats?${query.toString()}`);
   },
+
+  getReviewQueue: async (status?: string) => {
+    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+    const res = await api.get<ApiResponse<ReviewQueueItem[]>>(`/admin/review-queue${query}`);
+    return {
+      ...res,
+      data: Array.isArray(res.data)
+        ? (res.data as unknown as Record<string, unknown>[]).map(normalizeReviewQueueItem)
+        : [],
+    };
+  },
+
+  updateReviewQueue: (id: string, payload: { status: 'approved' | 'rejected' | 'escalated'; reviewNote?: string }) =>
+    api.patch<ApiResponse<ReviewQueueItem>>(`/admin/review-queue/${id}`, payload),
+
+  assistedClockIn: (payload: {
+    employeeId: string;
+    reasonCode: string;
+    note?: string;
+    workMode?: 'office' | 'wfh' | 'field' | 'client_site';
+    lat?: number;
+    lng?: number;
+    accuracy?: number;
+  }) => api.post<ApiResponse<AttendanceRecord>>('/admin/assisted-clock-in', payload),
+
+  getZones: () => api.get<ApiResponse<OfficeZone[]>>('/admin/zones'),
+
+  createZone: (payload: {
+    officeLocationId: string;
+    name: string;
+    type: OfficeZone['type'];
+    centerLat: number;
+    centerLng: number;
+    radiusMeters: number;
+    allowedForAttendance?: boolean;
+    riskWeight?: number;
+  }) => api.post<ApiResponse<OfficeZone>>('/admin/zones', payload),
+
+  updateZone: (id: string, payload: Partial<Pick<OfficeZone, 'name' | 'type' | 'centerLat' | 'centerLng' | 'radiusMeters' | 'allowedForAttendance' | 'riskWeight'>>) =>
+    api.patch<ApiResponse<OfficeZone>>(`/admin/zones/${id}`, payload),
 };

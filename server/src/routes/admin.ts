@@ -3,6 +3,8 @@ import { prisma } from '../config/prisma';
 import { verifyToken, requireRole } from '../middleware/auth';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { z } from 'zod';
+import { assessRisk, buildReviewSummary, resolveLocationAndZone } from '../utils/verification';
+import { createAuditLog } from '../utils/audit';
 
 const router = Router();
 router.use(verifyToken);
@@ -156,6 +158,7 @@ router.patch('/settings', async (req: Request, res: Response, next: NextFunction
       requireLocation: z.boolean().optional(),
       requireFaceCapture: z.boolean().optional(),
       requireLiveness: z.boolean().optional(),
+      requireEmployeePin: z.boolean().optional(),
       latePenaltyMode: z.string().optional(),
       office: z.object({
         id: z.string().optional(),
@@ -176,6 +179,7 @@ router.patch('/settings', async (req: Request, res: Response, next: NextFunction
         ...(payload.requireLocation !== undefined ? { requireLocation: payload.requireLocation } : {}),
         ...(payload.requireFaceCapture !== undefined ? { requireFaceCapture: payload.requireFaceCapture } : {}),
         ...(payload.requireLiveness !== undefined ? { requireLiveness: payload.requireLiveness } : {}),
+        ...(payload.requireEmployeePin !== undefined ? { requireEmployeePin: payload.requireEmployeePin } : {}),
         ...(payload.latePenaltyMode ? { latePenaltyMode: payload.latePenaltyMode } : {}),
       },
       create: {
@@ -186,6 +190,7 @@ router.patch('/settings', async (req: Request, res: Response, next: NextFunction
         ...(payload.requireLocation !== undefined ? { requireLocation: payload.requireLocation } : {}),
         ...(payload.requireFaceCapture !== undefined ? { requireFaceCapture: payload.requireFaceCapture } : {}),
         ...(payload.requireLiveness !== undefined ? { requireLiveness: payload.requireLiveness } : {}),
+        ...(payload.requireEmployeePin !== undefined ? { requireEmployeePin: payload.requireEmployeePin } : {}),
         ...(payload.latePenaltyMode ? { latePenaltyMode: payload.latePenaltyMode } : {}),
       },
     });
@@ -273,6 +278,271 @@ router.patch('/corrections/:id', async (req: Request, res: Response, next: NextF
       data: { status, reviewNote, reviewedBy: (req as Request & { user?: { id: string } }).user?.id },
     });
     res.json({ success: true, data: correction });
+  } catch (err) { next(err); }
+});
+
+router.get('/zones', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const zones = await prisma.officeZone.findMany({
+      include: { officeLocation: true },
+      orderBy: [{ officeLocationId: 'asc' }, { createdAt: 'asc' }],
+    });
+    res.json({ success: true, data: zones });
+  } catch (err) { next(err); }
+});
+
+router.post('/zones', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = z.object({
+      officeLocationId: z.string(),
+      name: z.string().min(1),
+      type: z.enum(['entry_zone', 'work_zone', 'staff_quarters_zone', 'admin_zone', 'warehouse_zone', 'restricted_zone']),
+      centerLat: z.number(),
+      centerLng: z.number(),
+      radiusMeters: z.number().int().min(10).max(1000),
+      allowedForAttendance: z.boolean().default(true),
+      riskWeight: z.number().int().min(0).max(100).default(0),
+    }).parse(req.body);
+
+    const zone = await prisma.officeZone.create({ data });
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: 'admin.zone.created',
+      entityType: 'office_zone',
+      entityId: zone.id,
+      metadata: data,
+    });
+
+    res.status(201).json({ success: true, data: zone });
+  } catch (err) { next(err); }
+});
+
+router.patch('/zones/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = z.object({
+      name: z.string().min(1).optional(),
+      type: z.enum(['entry_zone', 'work_zone', 'staff_quarters_zone', 'admin_zone', 'warehouse_zone', 'restricted_zone']).optional(),
+      centerLat: z.number().optional(),
+      centerLng: z.number().optional(),
+      radiusMeters: z.number().int().min(10).max(1000).optional(),
+      allowedForAttendance: z.boolean().optional(),
+      riskWeight: z.number().int().min(0).max(100).optional(),
+    }).parse(req.body);
+
+    const zone = await prisma.officeZone.update({
+      where: { id: req.params.id as string },
+      data,
+    });
+
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: 'admin.zone.updated',
+      entityType: 'office_zone',
+      entityId: zone.id,
+      metadata: data,
+    });
+
+    res.json({ success: true, data: zone });
+  } catch (err) { next(err); }
+});
+
+router.get('/review-queue', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { status } = req.query as Record<string, string>;
+    const queue = await prisma.reviewQueueItem.findMany({
+      where: status ? { status: status as 'pending' | 'approved' | 'rejected' | 'escalated' } : undefined,
+      include: {
+        user: { select: { id: true, name: true, employeeId: true, department: true } },
+        attendanceVerification: true,
+      },
+      orderBy: [{ riskScore: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    res.json({ success: true, data: queue });
+  } catch (err) { next(err); }
+});
+
+router.patch('/review-queue/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = z.object({
+      status: z.enum(['approved', 'rejected', 'escalated']),
+      reviewNote: z.string().optional(),
+    }).parse(req.body);
+
+    const queueItem = await prisma.reviewQueueItem.update({
+      where: { id: req.params.id as string },
+      data: {
+        status: data.status,
+        reviewNote: data.reviewNote,
+        reviewedBy: req.user!.id,
+        reviewedAt: new Date(),
+      },
+    });
+
+    await prisma.attendanceVerification.update({
+      where: { id: queueItem.attendanceVerificationId },
+      data: { reviewStatus: data.status },
+    });
+
+    if (queueItem.attendanceRecordId) {
+      await prisma.attendanceRecord.update({
+        where: { id: queueItem.attendanceRecordId },
+        data: {
+          reviewDecision: data.status === 'approved' ? 'approved' : data.status === 'escalated' ? 'flagged' : 'blocked',
+        },
+      });
+    }
+
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: `admin.review_queue.${data.status}`,
+      entityType: 'review_queue_item',
+      entityId: queueItem.id,
+      metadata: { reviewNote: data.reviewNote },
+    });
+
+    res.json({ success: true, data: queueItem });
+  } catch (err) { next(err); }
+});
+
+router.post('/assisted-clock-in', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = z.object({
+      employeeId: z.string(),
+      reasonCode: z.string().min(1),
+      note: z.string().optional(),
+      workMode: z.enum(['office', 'wfh', 'field', 'client_site']).default('office'),
+      lat: z.number().optional(),
+      lng: z.number().optional(),
+      accuracy: z.number().optional(),
+    }).parse(req.body);
+
+    const employee = await prisma.user.findUnique({ where: { id: data.employeeId } });
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const existing = await prisma.attendanceRecord.findFirst({
+      where: { userId: employee.id, date: today },
+    });
+
+    if (existing) {
+      res.status(400).json({ success: false, message: 'Attendance already exists for today.' });
+      return;
+    }
+
+    const locationResult = await resolveLocationAndZone({
+      lat: data.lat,
+      lng: data.lng,
+      accuracy: data.accuracy,
+    });
+
+    const risk = assessRisk({
+      pinVerified: false,
+      hasEnrollment: Boolean(employee.masterPhoto),
+      faceScore: employee.masterPhoto ? 0.7 : 0.4,
+      livenessScore: 0.45,
+      locationStatus: locationResult.locationStatus,
+      zoneType: locationResult.zoneType,
+      knownDevice: false,
+      lateMinutes: 0,
+      previousOverrides: 0,
+    });
+
+    const record = await prisma.attendanceRecord.create({
+      data: {
+        userId: employee.id,
+        date: today,
+        clockInTime: new Date(),
+        clockInMethod: 'admin_override',
+        clockInLat: data.lat,
+        clockInLng: data.lng,
+        clockInAccuracy: data.accuracy,
+        locationStatus: locationResult.locationStatus,
+        distanceFromOffice: locationResult.distanceFromOffice,
+        status: data.workMode === 'wfh' ? 'wfh' : data.workMode === 'field' ? 'field' : 'present',
+        workMode: data.workMode,
+        notes: data.note,
+        reviewDecision: 'flagged',
+        verificationMethod: 'admin_override',
+        reviewReasons: [
+          'Attendance was created through the admin-assisted override flow.',
+          `Reason code: ${data.reasonCode}.`,
+        ],
+      } as never,
+    });
+
+    const verification = await prisma.attendanceVerification.create({
+      data: {
+        attendanceRecordId: record.id,
+        userId: employee.id,
+        pinVerified: false,
+        faceScore: employee.masterPhoto ? 0.7 : 0.4,
+        faceDecision: 'flagged',
+        livenessScore: 0.45,
+        locationStatus: locationResult.locationStatus,
+        zoneType: locationResult.zoneType ?? undefined,
+        riskScore: Math.max(risk.score, 45),
+        riskReasons: [
+          ...risk.reasons,
+          'Attendance was submitted via admin-assisted override.',
+        ],
+        aiSummary: buildReviewSummary({
+          userName: employee.name,
+          score: Math.max(risk.score, 45),
+          reasons: [
+            ...risk.reasons,
+            `Admin override reason: ${data.reasonCode}.`,
+          ],
+          zoneType: locationResult.zoneType,
+          locationStatus: locationResult.locationStatus,
+        }),
+        reviewStatus: 'pending',
+        method: 'admin_override',
+      },
+    });
+
+    await prisma.reviewQueueItem.create({
+      data: {
+        attendanceVerificationId: verification.id,
+        attendanceRecordId: record.id,
+        userId: employee.id,
+        riskScore: Math.max(risk.score, 45),
+        status: 'pending',
+        recommendation: 'Review admin-assisted clock-in for audit completeness.',
+        reasons: [
+          ...risk.reasons,
+          `Admin override by ${req.user!.id}.`,
+          `Reason code: ${data.reasonCode}.`,
+        ],
+      },
+    });
+
+    await prisma.adminOverride.create({
+      data: {
+        attendanceRecordId: record.id,
+        employeeId: employee.id,
+        adminId: req.user!.id,
+        reasonCode: data.reasonCode,
+        note: data.note,
+      },
+    });
+
+    await createAuditLog({
+      actorId: req.user!.id,
+      action: 'admin.assisted_clock_in',
+      entityType: 'attendance',
+      entityId: record.id,
+      metadata: {
+        employeeId: employee.id,
+        reasonCode: data.reasonCode,
+        note: data.note,
+      },
+    });
+
+    res.status(201).json({ success: true, data: record, message: 'Admin-assisted clock-in created.' });
   } catch (err) { next(err); }
 });
 

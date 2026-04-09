@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import {
-  Users, Clock, UserX, CalendarOff, QrCode, FileText, DollarSign,
+  Users, Clock, UserX, CalendarOff, ShieldCheck, FileText, DollarSign,
   TrendingUp, ArrowRight, Megaphone, CheckCircle
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
@@ -318,7 +318,7 @@ function EmployeeDashboard() {
             </div>
             <Link to="/clock-in">
               <Button className="gradient-accent text-white">
-                <QrCode size={16} /> Clock In
+                <ShieldCheck size={16} /> Start Verification
               </Button>
             </Link>
           </div>
@@ -367,7 +367,7 @@ function EmployeeDashboard() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Link to="/clock-in">
             <Button variant="outline" className="w-full flex-col h-auto py-4 gap-2">
-              <QrCode size={20} />
+              <ShieldCheck size={20} />
               <span className="text-xs">Clock In/Out</span>
             </Button>
           </Link>

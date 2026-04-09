@@ -8,6 +8,16 @@ async function main() {
 
   // Hash password
   const hash = async (pw: string) => bcrypt.hash(pw, 10);
+  const hashPin = async (pin: string) => bcrypt.hash(pin, 10);
+  const demoFaceImage = (label: string) =>
+    `data:image/svg+xml;utf8,${encodeURIComponent(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+        <rect width="512" height="512" rx="40" fill="#16162a"/>
+        <circle cx="256" cy="196" r="88" fill="#7c6bff"/>
+        <path d="M128 420c28-70 80-112 128-112s100 42 128 112" fill="#8f80ff"/>
+        <text x="256" y="474" text-anchor="middle" font-size="28" fill="#ffffff" font-family="Arial, sans-serif">${label}</text>
+      </svg>
+    `)}`;
 
   // Upsert users
   const admin = await prisma.user.upsert({
@@ -18,6 +28,7 @@ async function main() {
       password: await hash('admin123'), role: 'admin',
       employeeId: 'EMP001', position: 'System Administrator',
       department: 'Management', hourlyRate: 5000, basicSalary: 800000,
+      pinHash: await hashPin('1111'),
     },
   });
 
@@ -29,6 +40,7 @@ async function main() {
       password: await hash('password123'), role: 'manager',
       employeeId: 'EMP002', position: 'Operations Manager',
       department: 'Operations', hourlyRate: 2500, basicSalary: 400000,
+      pinHash: await hashPin('2222'),
     },
   });
 
@@ -40,6 +52,7 @@ async function main() {
       password: await hash('password123'), role: 'employee',
       employeeId: 'EMP003', position: 'Software Engineer',
       department: 'Engineering', hourlyRate: 1875, basicSalary: 300000,
+      pinHash: await hashPin('3333'),
     },
   });
 
@@ -51,6 +64,7 @@ async function main() {
       password: await hash('password123'), role: 'employee',
       employeeId: 'EMP004', position: 'Sales Executive',
       department: 'Sales', hourlyRate: 1562, basicSalary: 250000,
+      pinHash: await hashPin('4444'),
     },
   });
 
@@ -62,6 +76,7 @@ async function main() {
       password: await hash('password123'), role: 'employee',
       employeeId: 'EMP005', position: 'Marketing Analyst',
       department: 'Marketing', hourlyRate: 1562, basicSalary: 250000,
+      pinHash: await hashPin('5555'),
     },
   });
 
@@ -104,9 +119,148 @@ async function main() {
       requireLocation: true,
       requireFaceCapture: true,
       requireLiveness: true,
+      requireEmployeePin: true,
       latePenaltyMode: 'track_only',
     },
   });
+
+  const zones = [
+    {
+      id: 'zone-entry',
+      name: 'Reception Entry Zone',
+      type: 'entry_zone' as const,
+      centerLat: 6.52445,
+      centerLng: 3.37925,
+      radiusMeters: 35,
+      allowedForAttendance: true,
+      riskWeight: 0,
+    },
+    {
+      id: 'zone-work',
+      name: 'Main Work Zone',
+      type: 'work_zone' as const,
+      centerLat: 6.5244,
+      centerLng: 3.3792,
+      radiusMeters: 75,
+      allowedForAttendance: true,
+      riskWeight: 5,
+    },
+    {
+      id: 'zone-quarters',
+      name: 'Staff Quarters Zone',
+      type: 'staff_quarters_zone' as const,
+      centerLat: 6.52495,
+      centerLng: 3.37965,
+      radiusMeters: 55,
+      allowedForAttendance: false,
+      riskWeight: 35,
+    },
+  ];
+
+  for (const zone of zones) {
+    await prisma.officeZone.upsert({
+      where: { id: zone.id },
+      update: {
+        officeLocationId: office.id,
+        name: zone.name,
+        type: zone.type,
+        centerLat: zone.centerLat,
+        centerLng: zone.centerLng,
+        radiusMeters: zone.radiusMeters,
+        allowedForAttendance: zone.allowedForAttendance,
+        riskWeight: zone.riskWeight,
+      },
+      create: {
+        id: zone.id,
+        officeLocationId: office.id,
+        name: zone.name,
+        type: zone.type,
+        centerLat: zone.centerLat,
+        centerLng: zone.centerLng,
+        radiusMeters: zone.radiusMeters,
+        allowedForAttendance: zone.allowedForAttendance,
+        riskWeight: zone.riskWeight,
+      },
+    });
+  }
+
+  const enrollmentBlueprints = [
+    {
+      userId: admin.id,
+      appearanceMetadata: { usuallyWearsGlasses: false, facialHairCommon: true, headwearCommon: false },
+      label: 'Admin',
+    },
+    {
+      userId: manager.id,
+      appearanceMetadata: { usuallyWearsGlasses: true, facialHairCommon: false, headwearCommon: false },
+      label: 'Sarah',
+    },
+    {
+      userId: amaka.id,
+      appearanceMetadata: { usuallyWearsGlasses: false, facialHairCommon: false, headwearCommon: false },
+      label: 'Amaka',
+    },
+    {
+      userId: chidi.id,
+      appearanceMetadata: { usuallyWearsGlasses: false, facialHairCommon: true, headwearCommon: false },
+      label: 'Chidi',
+    },
+    {
+      userId: fatima.id,
+      appearanceMetadata: { usuallyWearsGlasses: true, facialHairCommon: false, headwearCommon: true },
+      label: 'Fatima',
+    },
+  ];
+
+  for (const [index, blueprint] of enrollmentBlueprints.entries()) {
+    const version = 1;
+    const enrollment = await prisma.faceEnrollment.upsert({
+      where: { id: `face-enrollment-${index + 1}` },
+      update: {
+        userId: blueprint.userId,
+        version,
+        isActive: true,
+        qualityScore: 0.9,
+        appearanceMetadata: blueprint.appearanceMetadata,
+      },
+      create: {
+        id: `face-enrollment-${index + 1}`,
+        userId: blueprint.userId,
+        version,
+        isActive: true,
+        qualityScore: 0.9,
+        appearanceMetadata: blueprint.appearanceMetadata,
+      },
+    });
+
+    const images = [
+      { kind: 'frontal', imageRef: demoFaceImage(`${blueprint.label} front`), qualityScore: 0.92 },
+      { kind: 'slight_left', imageRef: demoFaceImage(`${blueprint.label} left`), qualityScore: 0.9 },
+      { kind: 'slight_right', imageRef: demoFaceImage(`${blueprint.label} right`), qualityScore: 0.9 },
+      { kind: 'neutral', imageRef: demoFaceImage(`${blueprint.label} neutral`), qualityScore: 0.88 },
+      { kind: 'glasses_optional', imageRef: demoFaceImage(`${blueprint.label} glasses`), qualityScore: 0.86 },
+    ];
+
+    for (const image of images) {
+      await prisma.faceEnrollmentImage.upsert({
+        where: { id: `${enrollment.id}-${image.kind}` },
+        update: image,
+        create: {
+          id: `${enrollment.id}-${image.kind}`,
+          enrollmentId: enrollment.id,
+          ...image,
+        },
+      });
+    }
+
+    await prisma.user.update({
+      where: { id: blueprint.userId },
+      data: {
+        masterPhoto: demoFaceImage(`${blueprint.label} avatar`),
+        appearanceProfile: blueprint.appearanceMetadata,
+      },
+    });
+  }
 
   // Sample attendance for this month
   const today = new Date();
@@ -176,6 +330,12 @@ async function main() {
   console.log('  Employee: amaka@dala.com    / password123');
   console.log('  Employee: chidi@dala.com    / password123');
   console.log('  Employee: fatima@dala.com   / password123\n');
+  console.log('🔐 Demo PINs:');
+  console.log('  Admin:    1111');
+  console.log('  Manager:  2222');
+  console.log('  Amaka:    3333');
+  console.log('  Chidi:    4444');
+  console.log('  Fatima:   5555\n');
 }
 
 main().catch(console.error).finally(() => prisma.$disconnect());

@@ -4,6 +4,34 @@ let accessToken: string | null = null;
 let isRefreshing = false;
 let refreshSubscribers: Array<(token: string) => void> = [];
 
+function getDeviceFingerprint() {
+  if (typeof window === 'undefined') return 'server-render';
+
+  const key = 'dala-device-fingerprint';
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+
+  const next = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `dala-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  window.localStorage.setItem(key, next);
+  return next;
+}
+
+function getDeviceLabel() {
+  if (typeof navigator === 'undefined') return 'Unknown device';
+  const agent = navigator.userAgent || '';
+  const platform = navigator.platform || '';
+
+  if (/iPhone/i.test(agent)) return 'iPhone browser';
+  if (/iPad/i.test(agent)) return 'iPad browser';
+  if (/Android/i.test(agent)) return 'Android browser';
+  if (/Windows/i.test(platform)) return 'Windows browser';
+  if (/Mac/i.test(platform)) return 'Mac browser';
+  return `${platform || 'Unknown'} browser`;
+}
+
 export const setToken = (token: string | null) => {
   accessToken = token;
 };
@@ -44,7 +72,11 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-device-fingerprint': getDeviceFingerprint(),
+    'x-device-label': getDeviceLabel(),
+  };
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
 
   const res = await fetch(`${BASE_URL}${path}`, {

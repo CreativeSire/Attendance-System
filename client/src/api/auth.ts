@@ -46,6 +46,23 @@ export const authApi = {
   updateProfile: (data: Partial<User> & { password?: string }) =>
     api.patch<ApiResponse<User>>('/auth/profile', data),
 
+  setupPin: (pin: string) =>
+    api.post<ApiResponse<null>>('/auth/pin/setup', { pin }),
+
+  resetPin: (userId: string, pin: string) =>
+    api.post<ApiResponse<null>>(`/auth/pin/reset/${userId}`, { pin }),
+
+  getFaceEnrollment: async () => {
+    const res = await api.get<ApiResponse<unknown>>('/auth/face-enrollment');
+    return res;
+  },
+
+  saveFaceEnrollment: (payload: {
+    images: Array<{ kind: string; imageRef: string; qualityScore?: number }>;
+    appearanceMetadata?: Record<string, unknown>;
+  }) =>
+    api.post<ApiResponse<unknown>>('/auth/face-enrollment', payload),
+
   uploadMasterPhoto: (photoBase64: string) =>
     api.post<ApiResponse<{ url: string }>>('/auth/master-photo', { photo: photoBase64 }),
 };
