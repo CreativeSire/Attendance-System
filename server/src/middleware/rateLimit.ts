@@ -22,10 +22,12 @@ export function rateLimit(options: {
   windowMs: number;
   max: number;
   keyPrefix: string;
+  keyBuilder?: (req: Request) => string | null | undefined;
 }) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const now = Date.now();
-    const key = `${options.keyPrefix}:${getClientKey(req)}`;
+    const extraKey = options.keyBuilder?.(req);
+    const key = `${options.keyPrefix}:${getClientKey(req)}:${extraKey || 'anonymous'}`;
     const bucket = buckets.get(key);
 
     if (!bucket || bucket.resetAt <= now) {

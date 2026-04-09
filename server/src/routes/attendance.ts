@@ -19,7 +19,12 @@ import {
 } from '../utils/verification';
 
 const router = Router();
-const verificationRateLimit = rateLimit({ windowMs: 10 * 60_000, max: 30, keyPrefix: 'attendance-verification' });
+const verificationRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: 40,
+  keyPrefix: 'attendance-verification',
+  keyBuilder: (req) => req.user?.id || (typeof req.body?.deviceFingerprint === 'string' ? req.body.deviceFingerprint : null),
+});
 
 router.use(verifyToken);
 

@@ -11,8 +11,18 @@ import { rateLimit } from '../middleware/rateLimit';
 import { validateImagePayload } from '../utils/media';
 
 const router = Router();
-const authRateLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'auth' });
-const loginRateLimit = rateLimit({ windowMs: 15 * 60_000, max: 10, keyPrefix: 'auth-login' });
+const authRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  keyPrefix: 'auth',
+  keyBuilder: (req) => req.user?.id || (typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.slice(0, 16) : null),
+});
+const loginRateLimit = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 12,
+  keyPrefix: 'auth-login',
+  keyBuilder: (req) => (typeof req.body?.email === 'string' ? req.body.email.toLowerCase() : null),
+});
 
 const loginSchema = z.object({
   email: z.string().email(),
