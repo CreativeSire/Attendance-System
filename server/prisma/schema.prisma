@@ -391,6 +391,8 @@ model FaceEnrollmentImage {
   kind          String
   imageRef      String
   qualityScore  Float    @default(0)
+  descriptor    Json?
+  captureMetadata Json?
   createdAt     DateTime @default(now())
 }
 
@@ -403,6 +405,7 @@ model OfficeZone {
   centerLat           Float
   centerLng           Float
   radiusMeters        Int      @default(50)
+  geometry            Json?
   allowedForAttendance Boolean @default(true)
   riskWeight          Int      @default(0)
   createdAt           DateTime @default(now())
@@ -458,6 +461,8 @@ model AttendanceVerification {
   verificationSessionId String?
   pinVerified       Boolean  @default(false)
   faceScore         Float?
+  faceDistance      Float?
+  faceCaptureMetadata Json?
   faceDecision      VerificationDecision @default(flagged)
   livenessScore     Float?
   locationStatus    String?
@@ -465,6 +470,8 @@ model AttendanceVerification {
   riskScore         Int      @default(0)
   riskReasons       Json?
   aiSummary         String?
+  aiRecommendation  String?
+  aiModel           String?
   reviewStatus      ReviewQueueStatus @default(pending)
   deviceProfileId   String?
   deviceProfile     DeviceProfile? @relation(fields: [deviceProfileId], references: [id], onDelete: SetNull)
@@ -486,6 +493,8 @@ model ReviewQueueItem {
   status                ReviewQueueStatus @default(pending)
   recommendation        String?
   reasons               Json?
+  aiRecommendation      String?
+  aiRiskSummary         String?
   reviewedBy            String?
   reviewNote            String?
   reviewedAt            DateTime?

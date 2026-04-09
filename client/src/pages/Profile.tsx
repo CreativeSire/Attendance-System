@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import FaceCapture from '@/components/FaceCapture';
 import { getInitials } from '@/lib/utils';
+import { analyzeFaceImage, ensureFaceModels } from '@/lib/face-verification';
 import { normalizeFaceEnrollment } from '@/api/normalizers';
 import type { FaceEnrollment } from '@/types';
 
@@ -254,8 +255,28 @@ function FaceEnrollmentSection({
 
     setSaving(true);
     try {
+      await ensureFaceModels();
+      const analyzedImages = await Promise.all(images.map(async (image) => {
+        const analysis = await analyzeFaceImage(image.imageRef);
+        if (!analysis) {
+          throw new Error(`No usable face was detected for the ${image.kind.replace(/_/g, ' ')} capture.`);
+        }
+
+        return {
+          ...image,
+          qualityScore: analysis.qualityScore,
+          descriptor: analysis.descriptor,
+          captureMetadata: {
+            detectionScore: analysis.detectionScore,
+            box: analysis.box,
+            landmarks: analysis.landmarks,
+            eyeAspectRatio: analysis.eyeAspectRatio,
+          },
+        };
+      }));
+
       await authApi.saveFaceEnrollment({
-        images,
+        images: analyzedImages,
         appearanceMetadata: appearance,
       });
       toast.success('Face enrollment saved.');

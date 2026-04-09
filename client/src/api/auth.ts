@@ -58,7 +58,7 @@ export const authApi = {
   },
 
   saveFaceEnrollment: (payload: {
-    images: Array<{ kind: string; imageRef: string; qualityScore?: number }>;
+    images: Array<{ kind: string; imageRef: string; qualityScore?: number; descriptor?: number[]; captureMetadata?: Record<string, unknown> }>;
     appearanceMetadata?: Record<string, unknown>;
   }) =>
     api.post<ApiResponse<unknown>>('/auth/face-enrollment', payload),

@@ -39,6 +39,159 @@ export type RiskAssessmentResult = {
   recommendReview: boolean;
 };
 
+type GeometryPoint = { lat: number; lng: number };
+type ZoneGeometry =
+  | { type: 'circle'; centerLat: number; centerLng: number; radiusMeters: number }
+  | { type: 'polygon'; points: GeometryPoint[] };
+
+export type FaceMatchResult = {
+  score: number;
+  distance: number | null;
+  matchedTemplateCount: number;
+  reasons: string[];
+};
+
+function toGeometry(zone: {
+  centerLat: number;
+  centerLng: number;
+  radiusMeters: number;
+  geometry?: Prisma.JsonValue | null;
+}): ZoneGeometry {
+  if (zone.geometry && typeof zone.geometry === 'object' && !Array.isArray(zone.geometry)) {
+    const raw = zone.geometry as Record<string, unknown>;
+    if (
+      raw.type === 'polygon' &&
+      Array.isArray(raw.points) &&
+      raw.points.every((point) => point && typeof point === 'object' && typeof (point as Record<string, unknown>).lat === 'number' && typeof (point as Record<string, unknown>).lng === 'number')
+    ) {
+      return {
+        type: 'polygon',
+        points: raw.points as GeometryPoint[],
+      };
+    }
+
+    if (
+      raw.type === 'circle' &&
+      typeof raw.centerLat === 'number' &&
+      typeof raw.centerLng === 'number' &&
+      typeof raw.radiusMeters === 'number'
+    ) {
+      return {
+        type: 'circle',
+        centerLat: raw.centerLat,
+        centerLng: raw.centerLng,
+        radiusMeters: raw.radiusMeters,
+      };
+    }
+  }
+
+  return {
+    type: 'circle',
+    centerLat: zone.centerLat,
+    centerLng: zone.centerLng,
+    radiusMeters: zone.radiusMeters,
+  };
+}
+
+function pointInPolygon(point: GeometryPoint, polygon: GeometryPoint[]) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i]!.lng;
+    const yi = polygon[i]!.lat;
+    const xj = polygon[j]!.lng;
+    const yj = polygon[j]!.lat;
+
+    const intersect =
+      yi > point.lat !== yj > point.lat &&
+      point.lng < ((xj - xi) * (point.lat - yi)) / ((yj - yi) || Number.EPSILON) + xi;
+
+    if (intersect) inside = !inside;
+  }
+
+  return inside;
+}
+
+function zoneContainsPoint(zone: {
+  centerLat: number;
+  centerLng: number;
+  radiusMeters: number;
+  geometry?: Prisma.JsonValue | null;
+}, point: GeometryPoint) {
+  const geometry = toGeometry(zone);
+  if (geometry.type === 'polygon') {
+    return pointInPolygon(point, geometry.points);
+  }
+
+  return haversineDistanceMeters(point.lat, point.lng, geometry.centerLat, geometry.centerLng) <= geometry.radiusMeters;
+}
+
+function descriptorDistance(a: number[], b: number[]) {
+  if (a.length !== b.length || a.length === 0) return Number.POSITIVE_INFINITY;
+
+  let sum = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    const delta = a[index]! - b[index]!;
+    sum += delta * delta;
+  }
+
+  return Math.sqrt(sum);
+}
+
+function normalizeDescriptor(input: unknown): number[] | null {
+  if (!Array.isArray(input)) return null;
+  const values = input
+    .map((entry) => (typeof entry === 'number' ? entry : Number(entry)))
+    .filter((entry) => Number.isFinite(entry));
+
+  return values.length > 0 ? values : null;
+}
+
+export function compareFaceDescriptor(args: {
+  candidate?: number[] | null;
+  enrollmentDescriptors: Array<number[] | null | undefined>;
+  enrollmentQualityScore?: number | null;
+}): FaceMatchResult {
+  const descriptors = args.enrollmentDescriptors
+    .map((descriptor) => normalizeDescriptor(descriptor))
+    .filter((descriptor): descriptor is number[] => Boolean(descriptor && descriptor.length));
+
+  if (!args.candidate || !args.candidate.length) {
+    return {
+      score: Math.max(0.35, Math.min(0.72, args.enrollmentQualityScore ?? 0.55)),
+      distance: null,
+      matchedTemplateCount: descriptors.length,
+      reasons: ['Live face descriptor was unavailable, so the system fell back to workflow-grade scoring.'],
+    };
+  }
+
+  if (descriptors.length === 0) {
+    return {
+      score: Math.max(0.4, Math.min(0.76, args.enrollmentQualityScore ?? 0.6)),
+      distance: null,
+      matchedTemplateCount: 0,
+      reasons: ['Enrollment images do not yet have usable face descriptors. Re-enrollment is recommended.'],
+    };
+  }
+
+  const bestDistance = descriptors.reduce((best, descriptor) => Math.min(best, descriptorDistance(args.candidate!, descriptor)), Number.POSITIVE_INFINITY);
+  const normalizedDistance = Number.isFinite(bestDistance) ? Math.max(0, Math.min(1, bestDistance / 0.9)) : 1;
+  const score = Number((1 - normalizedDistance).toFixed(4));
+  const reasons: string[] = [];
+
+  if (bestDistance > 0.55) {
+    reasons.push('Face descriptor distance is far outside the expected range.');
+  } else if (bestDistance > 0.4) {
+    reasons.push('Face descriptor distance is slightly weaker than the employee baseline.');
+  }
+
+  return {
+    score,
+    distance: Number.isFinite(bestDistance) ? Number(bestDistance.toFixed(4)) : null,
+    matchedTemplateCount: descriptors.length,
+    reasons,
+  };
+}
+
 export async function resolveLocationAndZone(input: LocationPayload): Promise<ResolvedLocationResult> {
   const { office } = await getRuntimeConfig();
   if (!office || input.lat === undefined || input.lng === undefined) {
@@ -66,13 +219,8 @@ export async function resolveLocationAndZone(input: LocationPayload): Promise<Re
   let bestDistance = Number.POSITIVE_INFINITY;
 
   for (const zone of zones) {
-    const zoneDistance = haversineDistanceMeters(
-      input.lat,
-      input.lng,
-      zone.centerLat,
-      zone.centerLng
-    );
-    if (zoneDistance <= zone.radiusMeters && zoneDistance < bestDistance) {
+    const zoneDistance = haversineDistanceMeters(input.lat, input.lng, zone.centerLat, zone.centerLng);
+    if (zoneContainsPoint(zone, { lat: input.lat, lng: input.lng }) && zoneDistance < bestDistance) {
       matchedZone = zone;
       bestDistance = zoneDistance;
     }

@@ -1,5 +1,5 @@
 import { api } from './client';
-import { normalizeAttendance, normalizeReviewQueueItem } from './normalizers';
+import { normalizeAttendance, normalizeOfficeZone, normalizeReviewQueueItem } from './normalizers';
 import { getDeviceFingerprint, getDeviceLabel } from '@/lib/device';
 import type {
   AttendanceRecord,
@@ -41,6 +41,8 @@ export interface VerificationStartData {
 export interface VerificationCompleteData {
   sessionId: string;
   facePhoto: string;
+  faceDescriptor?: number[];
+  faceCaptureMetrics?: Record<string, unknown>;
   lateReason?: string;
   mood?: string;
   livenessResponses: LivenessResponse[];
@@ -174,7 +176,15 @@ export const attendanceApi = {
     accuracy?: number;
   }) => api.post<ApiResponse<AttendanceRecord>>('/admin/assisted-clock-in', payload),
 
-  getZones: () => api.get<ApiResponse<OfficeZone[]>>('/admin/zones'),
+  getZones: async () => {
+    const res = await api.get<ApiResponse<OfficeZone[]>>('/admin/zones');
+    return {
+      ...res,
+      data: Array.isArray(res.data)
+        ? (res.data as unknown as Record<string, unknown>[]).map(normalizeOfficeZone)
+        : [],
+    };
+  },
 
   createZone: (payload: {
     officeLocationId: string;
@@ -183,10 +193,11 @@ export const attendanceApi = {
     centerLat: number;
     centerLng: number;
     radiusMeters: number;
+    geometry?: Record<string, unknown>;
     allowedForAttendance?: boolean;
     riskWeight?: number;
   }) => api.post<ApiResponse<OfficeZone>>('/admin/zones', payload),
 
-  updateZone: (id: string, payload: Partial<Pick<OfficeZone, 'name' | 'type' | 'centerLat' | 'centerLng' | 'radiusMeters' | 'allowedForAttendance' | 'riskWeight'>>) =>
+  updateZone: (id: string, payload: Partial<Pick<OfficeZone, 'name' | 'type' | 'centerLat' | 'centerLng' | 'radiusMeters' | 'geometry' | 'allowedForAttendance' | 'riskWeight'>>) =>
     api.patch<ApiResponse<OfficeZone>>(`/admin/zones/${id}`, payload),
 };

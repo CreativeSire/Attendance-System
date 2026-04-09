@@ -13,10 +13,12 @@ import {
   assessRisk,
   buildLivenessPrompt,
   buildReviewSummary,
+  compareFaceDescriptor,
   generateLivenessChallenges,
   resolveLocationAndZone,
   upsertDeviceProfile,
 } from '../utils/verification';
+import { generateAiReview } from '../services/aiReviewer';
 
 const router = Router();
 const verificationRateLimit = rateLimit({
@@ -46,6 +48,8 @@ const verificationStartSchema = z.object({
 const verificationCompleteSchema = z.object({
   sessionId: z.string(),
   facePhoto: z.string().min(1),
+  faceDescriptor: z.array(z.number()).min(32).optional(),
+  faceCaptureMetrics: z.record(z.any()).optional(),
   lateReason: z.string().optional(),
   mood: z.string().optional(),
   livenessResponses: z.array(z.object({
@@ -53,6 +57,7 @@ const verificationCompleteSchema = z.object({
     passed: z.boolean(),
     spokenDigits: z.string().optional(),
     confidence: z.number().min(0).max(1).optional(),
+    metrics: z.record(z.any()).optional(),
   })).min(1),
 });
 
@@ -341,7 +346,11 @@ router.post('/verification/complete', verificationRateLimit, async (req: Request
     });
 
     if (existing) {
-      res.status(400).json({ success: false, message: 'Attendance already exists for today.' });
+      res.json({
+        success: true,
+        data: normalizeAttendanceRecord({ ...existing, bddSubmitted: false }),
+        message: 'Attendance has already been recorded for today.',
+      });
       return;
     }
 
@@ -377,7 +386,12 @@ router.post('/verification/complete', verificationRateLimit, async (req: Request
 
     const activeEnrollment = session.user.faceEnrollments[0] ?? null;
     const averageLiveness = data.livenessResponses.reduce((sum, item) => sum + (item.confidence ?? (item.passed ? 0.85 : 0.2)), 0) / data.livenessResponses.length;
-    const faceScore = activeEnrollment ? Math.max(0.72, Math.min(0.96, activeEnrollment.qualityScore || 0.84)) : 0.45;
+    const faceMatch = compareFaceDescriptor({
+      candidate: data.faceDescriptor ?? null,
+      enrollmentDescriptors: activeEnrollment?.images.map((image) => ((image as unknown as { descriptor?: number[] | null }).descriptor ?? null)) ?? [],
+      enrollmentQualityScore: activeEnrollment?.qualityScore ?? 0.6,
+    });
+    const faceScore = activeEnrollment ? faceMatch.score : 0.45;
 
     const now = new Date();
     const { appConfig } = await getRuntimeConfig();
@@ -431,6 +445,23 @@ router.post('/verification/complete', verificationRateLimit, async (req: Request
       } as never,
     });
 
+    const fallbackSummary = buildReviewSummary({
+      userName: session.user.name,
+      score: risk.score,
+      reasons: [...faceMatch.reasons, ...risk.reasons],
+      zoneType: session.officeZone?.type,
+      locationStatus: session.locationStatus || 'unavailable',
+    });
+    const aiReview = await generateAiReview({
+      userName: session.user.name,
+      riskScore: risk.score,
+      reasons: [...faceMatch.reasons, ...risk.reasons],
+      locationStatus: session.locationStatus || 'unavailable',
+      zoneType: session.officeZone?.type,
+      lateMinutes,
+      deviceKnown: Boolean(session.deviceFingerprint),
+    });
+
     const verification = await prisma.attendanceVerification.create({
       data: {
         attendanceRecordId: record.id,
@@ -438,22 +469,20 @@ router.post('/verification/complete', verificationRateLimit, async (req: Request
         verificationSessionId: session.id,
         pinVerified: session.pinVerified,
         faceScore,
+        faceDistance: faceMatch.distance,
+        faceCaptureMetadata: data.faceCaptureMetrics,
         faceDecision: activeEnrollment ? (faceScore < 0.72 ? 'flagged' : 'approved') : 'blocked',
         livenessScore: averageLiveness,
         locationStatus: session.locationStatus,
         zoneType: session.officeZone?.type,
         riskScore: risk.score,
-        riskReasons: risk.reasons,
-        aiSummary: buildReviewSummary({
-          userName: session.user.name,
-          score: risk.score,
-          reasons: risk.reasons,
-          zoneType: session.officeZone?.type,
-          locationStatus: session.locationStatus || 'unavailable',
-        }),
+        riskReasons: [...faceMatch.reasons, ...risk.reasons],
+        aiSummary: aiReview?.summary ?? fallbackSummary,
+        aiRecommendation: aiReview?.recommendation ?? (risk.recommendReview ? 'review' : 'approve'),
+        aiModel: aiReview?.model ?? 'rules-fallback',
         reviewStatus: risk.recommendReview ? 'pending' : 'approved',
         method: 'pin_face_location',
-      },
+      } as any,
     });
 
     await prisma.livenessAttempt.create({
@@ -477,9 +506,11 @@ router.post('/verification/complete', verificationRateLimit, async (req: Request
           userId: req.user!.id,
           riskScore: risk.score,
           status: 'pending',
-          recommendation: risk.decision === 'blocked' ? 'Manager review required before approval.' : 'Manager review recommended.',
-          reasons: risk.reasons,
-        },
+          recommendation: aiReview?.recommendation ?? (risk.decision === 'blocked' ? 'block' : 'review'),
+          reasons: [...faceMatch.reasons, ...risk.reasons],
+          aiRecommendation: aiReview?.recommendation ?? undefined,
+          aiRiskSummary: aiReview?.summary ?? fallbackSummary,
+        } as any,
       });
     }
 
@@ -501,9 +532,10 @@ router.post('/verification/complete', verificationRateLimit, async (req: Request
       metadata: {
         riskScore: risk.score,
         riskDecision: risk.decision,
-        reasons: risk.reasons,
+        reasons: [...faceMatch.reasons, ...risk.reasons],
         livenessScore: averageLiveness,
         faceScore,
+        faceDistance: faceMatch.distance,
         zoneType: session.officeZone?.type,
       },
     });
@@ -516,8 +548,12 @@ router.post('/verification/complete', verificationRateLimit, async (req: Request
           id: verification.id,
           riskScore: risk.score,
           decision: risk.decision,
-          reasons: risk.reasons,
+          reasons: [...faceMatch.reasons, ...risk.reasons],
           reviewStatus: risk.recommendReview ? 'pending' : 'approved',
+          aiSummary: aiReview?.summary ?? fallbackSummary,
+          aiRecommendation: aiReview?.recommendation ?? (risk.recommendReview ? 'review' : 'approve'),
+          aiModel: aiReview?.model ?? 'rules-fallback',
+          faceDistance: faceMatch.distance,
         },
       },
       message: risk.decision === 'blocked'

@@ -81,6 +81,8 @@ export interface FaceEnrollmentImage {
   kind: string;
   imageRef: string;
   qualityScore?: number;
+  descriptor?: number[];
+  captureMetadata?: Record<string, unknown>;
 }
 
 export interface FaceEnrollment {
@@ -126,6 +128,7 @@ export interface LivenessResponse {
   passed: boolean;
   spokenDigits?: string;
   confidence?: number;
+  metrics?: Record<string, unknown>;
 }
 
 export interface AttendanceVerification {
@@ -135,6 +138,9 @@ export interface AttendanceVerification {
   reasons: string[];
   reviewStatus: ReviewQueueStatus;
   aiSummary?: string;
+  aiRecommendation?: string;
+  aiModel?: string;
+  faceDistance?: number | null;
 }
 
 export interface BDDCheckIn {
@@ -284,6 +290,7 @@ export interface OfficeZone {
   centerLat: number;
   centerLng: number;
   radiusMeters: number;
+  geometry?: Record<string, unknown>;
   allowedForAttendance: boolean;
   riskWeight: number;
   createdAt?: string;
@@ -300,6 +307,8 @@ export interface ReviewQueueItem {
   status: ReviewQueueStatus;
   recommendation: string;
   reasons: string[];
+  aiRecommendation?: string;
+  aiRiskSummary?: string;
   reviewNote?: string;
   reviewedBy?: string;
   reviewedAt?: string;

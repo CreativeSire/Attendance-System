@@ -5,6 +5,7 @@ import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { z } from 'zod';
 import { assessRisk, buildReviewSummary, resolveLocationAndZone } from '../utils/verification';
 import { createAuditLog } from '../utils/audit';
+import { generateAiReview } from '../services/aiReviewer';
 
 const router = Router();
 router.use(verifyToken);
@@ -300,6 +301,7 @@ router.post('/zones', async (req: Request, res: Response, next: NextFunction) =>
       centerLat: z.number(),
       centerLng: z.number(),
       radiusMeters: z.number().int().min(10).max(1000),
+      geometry: z.record(z.any()).optional(),
       allowedForAttendance: z.boolean().default(true),
       riskWeight: z.number().int().min(0).max(100).default(0),
     }).parse(req.body);
@@ -325,6 +327,7 @@ router.patch('/zones/:id', async (req: Request, res: Response, next: NextFunctio
       centerLat: z.number().optional(),
       centerLng: z.number().optional(),
       radiusMeters: z.number().int().min(10).max(1000).optional(),
+      geometry: z.record(z.any()).optional(),
       allowedForAttendance: z.boolean().optional(),
       riskWeight: z.number().int().min(0).max(100).optional(),
     }).parse(req.body);
@@ -376,7 +379,7 @@ router.patch('/review-queue/:id', async (req: Request, res: Response, next: Next
         reviewNote: data.reviewNote,
         reviewedBy: req.user!.id,
         reviewedAt: new Date(),
-      },
+      } as any,
     });
 
     await prisma.attendanceVerification.update({
@@ -474,6 +477,29 @@ router.post('/assisted-clock-in', async (req: Request, res: Response, next: Next
       } as never,
     });
 
+    const fallbackSummary = buildReviewSummary({
+      userName: employee.name,
+      score: Math.max(risk.score, 45),
+      reasons: [
+        ...risk.reasons,
+        `Admin override reason: ${data.reasonCode}.`,
+      ],
+      zoneType: locationResult.zoneType,
+      locationStatus: locationResult.locationStatus,
+    });
+    const aiReview = await generateAiReview({
+      userName: employee.name,
+      riskScore: Math.max(risk.score, 45),
+      reasons: [
+        ...risk.reasons,
+        `Admin override reason: ${data.reasonCode}.`,
+      ],
+      locationStatus: locationResult.locationStatus,
+      zoneType: locationResult.zoneType,
+      deviceKnown: false,
+      lateMinutes: 0,
+    });
+
     const verification = await prisma.attendanceVerification.create({
       data: {
         attendanceRecordId: record.id,
@@ -489,19 +515,12 @@ router.post('/assisted-clock-in', async (req: Request, res: Response, next: Next
           ...risk.reasons,
           'Attendance was submitted via admin-assisted override.',
         ],
-        aiSummary: buildReviewSummary({
-          userName: employee.name,
-          score: Math.max(risk.score, 45),
-          reasons: [
-            ...risk.reasons,
-            `Admin override reason: ${data.reasonCode}.`,
-          ],
-          zoneType: locationResult.zoneType,
-          locationStatus: locationResult.locationStatus,
-        }),
+        aiSummary: aiReview?.summary ?? fallbackSummary,
+        aiRecommendation: aiReview?.recommendation ?? 'review',
+        aiModel: aiReview?.model ?? 'rules-fallback',
         reviewStatus: 'pending',
         method: 'admin_override',
-      },
+      } as any,
     });
 
     await prisma.reviewQueueItem.create({
@@ -511,13 +530,15 @@ router.post('/assisted-clock-in', async (req: Request, res: Response, next: Next
         userId: employee.id,
         riskScore: Math.max(risk.score, 45),
         status: 'pending',
-        recommendation: 'Review admin-assisted clock-in for audit completeness.',
+        recommendation: aiReview?.recommendation ?? 'review',
         reasons: [
           ...risk.reasons,
           `Admin override by ${req.user!.id}.`,
           `Reason code: ${data.reasonCode}.`,
         ],
-      },
+        aiRecommendation: aiReview?.recommendation ?? 'review',
+        aiRiskSummary: aiReview?.summary ?? fallbackSummary,
+      } as any,
     });
 
     await prisma.adminOverride.create({

@@ -62,6 +62,9 @@ export function normalizeAttendanceVerification(input: Record<string, unknown>):
         : [],
     reviewStatus: String(input.reviewStatus || 'pending') as AttendanceVerification['reviewStatus'],
     aiSummary: typeof input.aiSummary === 'string' ? input.aiSummary : undefined,
+    aiRecommendation: typeof input.aiRecommendation === 'string' ? input.aiRecommendation : undefined,
+    aiModel: typeof input.aiModel === 'string' ? input.aiModel : undefined,
+    faceDistance: typeof input.faceDistance === 'number' ? input.faceDistance : null,
   };
 }
 
@@ -127,6 +130,12 @@ export function normalizeFaceEnrollment(input: Record<string, unknown>): FaceEnr
           qualityScore: typeof (image as Record<string, unknown>).qualityScore === 'number'
             ? Number((image as Record<string, unknown>).qualityScore)
             : undefined,
+          descriptor: Array.isArray((image as Record<string, unknown>).descriptor)
+            ? ((image as Record<string, unknown>).descriptor as unknown[]).map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry))
+            : undefined,
+          captureMetadata: (image as Record<string, unknown>).captureMetadata && typeof (image as Record<string, unknown>).captureMetadata === 'object'
+            ? (image as Record<string, unknown>).captureMetadata as Record<string, unknown>
+            : undefined,
         }))
       : [],
     createdAt: String(input.createdAt || new Date().toISOString()),
@@ -154,6 +163,9 @@ export function normalizeOfficeZone(input: Record<string, unknown>): OfficeZone 
     centerLat: Number(input.centerLat || 0),
     centerLng: Number(input.centerLng || 0),
     radiusMeters: Number(input.radiusMeters || 0),
+    geometry: input.geometry && typeof input.geometry === 'object'
+      ? input.geometry as Record<string, unknown>
+      : undefined,
     allowedForAttendance: Boolean(input.allowedForAttendance ?? true),
     riskWeight: Number(input.riskWeight || 0),
     createdAt: typeof input.createdAt === 'string' ? input.createdAt : undefined,
@@ -176,6 +188,8 @@ export function normalizeReviewQueueItem(input: Record<string, unknown>): Review
     status: String(input.status || 'pending') as ReviewQueueItem['status'],
     recommendation: String(input.recommendation || ''),
     reasons: Array.isArray(input.reasons) ? input.reasons.map((item) => String(item)) : [],
+    aiRecommendation: typeof input.aiRecommendation === 'string' ? input.aiRecommendation : undefined,
+    aiRiskSummary: typeof input.aiRiskSummary === 'string' ? input.aiRiskSummary : undefined,
     reviewNote: typeof input.reviewNote === 'string' ? input.reviewNote : undefined,
     reviewedBy: typeof input.reviewedBy === 'string' ? input.reviewedBy : undefined,
     reviewedAt: typeof input.reviewedAt === 'string' ? input.reviewedAt : undefined,

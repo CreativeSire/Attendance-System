@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import ZoneMap from '@/components/ZoneMap';
 import type { AdminSettings, AttendanceRecord, OfficeZone, ReviewQueueItem } from '@/types';
 
 function Spinner() {
@@ -299,10 +300,12 @@ function ZonesTab() {
     officeLocationId: '',
     name: '',
     type: 'work_zone' as OfficeZone['type'],
+    geometryMode: 'circle' as 'circle' | 'polygon',
     centerLat: '',
     centerLng: '',
     radiusMeters: '',
     riskWeight: '20',
+    polygonPoints: [] as Array<{ lat: number; lng: number }>,
   });
 
   const load = useCallback(async () => {
@@ -327,21 +330,47 @@ function ZonesTab() {
       toast.error('Office and zone name are required.');
       return;
     }
+    if (form.geometryMode === 'polygon' && form.polygonPoints.length < 3) {
+      toast.error('Add at least three points to draw a polygon zone.');
+      return;
+    }
 
     setSaving(true);
     try {
+      const fallbackRadius = Number(form.radiusMeters || 50);
+      const geometry = form.geometryMode === 'polygon'
+        ? {
+            type: 'polygon',
+            points: form.polygonPoints,
+          }
+        : {
+            type: 'circle',
+            centerLat: Number(form.centerLat),
+            centerLng: Number(form.centerLng),
+            radiusMeters: Number(form.radiusMeters),
+          };
+
       await attendanceApi.createZone({
         officeLocationId: form.officeLocationId,
         name: form.name.trim(),
         type: form.type,
         centerLat: Number(form.centerLat),
         centerLng: Number(form.centerLng),
-        radiusMeters: Number(form.radiusMeters),
+        radiusMeters: fallbackRadius,
+        geometry,
         riskWeight: Number(form.riskWeight) || 0,
         allowedForAttendance: form.type !== 'restricted_zone',
       });
       toast.success('Zone created.');
-      setForm((current) => ({ ...current, name: '', centerLat: '', centerLng: '', radiusMeters: '', riskWeight: '20' }));
+      setForm((current) => ({
+        ...current,
+        name: '',
+        centerLat: '',
+        centerLng: '',
+        radiusMeters: '',
+        riskWeight: '20',
+        polygonPoints: [],
+      }));
       await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to create zone.');
@@ -352,13 +381,47 @@ function ZonesTab() {
 
   if (!settings) return <Spinner />;
 
+  const selectedOffice = settings.officeLocations.find((office) => office.id === form.officeLocationId) || settings.officeLocations[0];
+  const draftGeometry = form.geometryMode === 'polygon' && form.polygonPoints.length >= 2
+    ? { type: 'polygon' as const, points: form.polygonPoints }
+    : form.centerLat && form.centerLng
+      ? {
+          type: 'circle' as const,
+          centerLat: Number(form.centerLat),
+          centerLng: Number(form.centerLng),
+          radiusMeters: Number(form.radiusMeters || 50),
+        }
+      : null;
+
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-border bg-surface p-5 space-y-4">
         <div>
           <h3 className="font-semibold text-white">Create verification zones</h3>
-          <p className="mt-1 text-sm text-gray-400">Map work zones, entry zones, and staff quarters so nearby staff housing is not treated as the same thing as the work building.</p>
+          <p className="mt-1 text-sm text-gray-400">Click directly on the map to place a circle zone, or switch to polygon mode and drop multiple boundary points around the real building footprint.</p>
         </div>
+        <ZoneMap
+          office={selectedOffice}
+          zones={zones}
+          draft={draftGeometry}
+          onMapClick={(lat, lng) => {
+            if (form.geometryMode === 'polygon') {
+              setForm((current) => ({
+                ...current,
+                polygonPoints: [...current.polygonPoints, { lat, lng }],
+                centerLat: String(lat),
+                centerLng: String(lng),
+              }));
+              return;
+            }
+
+            setForm((current) => ({
+              ...current,
+              centerLat: String(Number(lat.toFixed(6))),
+              centerLng: String(Number(lng.toFixed(6))),
+            }));
+          }}
+        />
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <Label className="text-gray-300">Office</Label>
@@ -387,6 +450,21 @@ function ZonesTab() {
               <option value="restricted_zone">Restricted zone</option>
             </select>
           </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Geometry mode</Label>
+            <select
+              value={form.geometryMode}
+              onChange={(event) => setForm((current) => ({
+                ...current,
+                geometryMode: event.target.value as 'circle' | 'polygon',
+                polygonPoints: event.target.value === 'polygon' ? current.polygonPoints : [],
+              }))}
+              className="w-full rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-white focus:border-accent focus:outline-none"
+            >
+              <option value="circle">Circle radius</option>
+              <option value="polygon">Polygon boundary</option>
+            </select>
+          </div>
           <div className="space-y-2 md:col-span-2">
             <Label className="text-gray-300">Zone name</Label>
             <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className="bg-surface-2 border-border text-white" />
@@ -399,15 +477,34 @@ function ZonesTab() {
             <Label className="text-gray-300">Center longitude</Label>
             <Input value={form.centerLng} onChange={(event) => setForm((current) => ({ ...current, centerLng: event.target.value }))} className="bg-surface-2 border-border text-white" />
           </div>
-          <div className="space-y-2">
-            <Label className="text-gray-300">Radius (meters)</Label>
-            <Input value={form.radiusMeters} onChange={(event) => setForm((current) => ({ ...current, radiusMeters: event.target.value }))} className="bg-surface-2 border-border text-white" />
-          </div>
+          {form.geometryMode === 'circle' ? (
+            <div className="space-y-2">
+              <Label className="text-gray-300">Radius (meters)</Label>
+              <Input value={form.radiusMeters} onChange={(event) => setForm((current) => ({ ...current, radiusMeters: event.target.value }))} className="bg-surface-2 border-border text-white" />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label className="text-gray-300">Polygon points</Label>
+              <div className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-gray-300">
+                {form.polygonPoints.length} point{form.polygonPoints.length === 1 ? '' : 's'} added
+              </div>
+            </div>
+          )}
           <div className="space-y-2">
             <Label className="text-gray-300">Risk weight</Label>
             <Input value={form.riskWeight} onChange={(event) => setForm((current) => ({ ...current, riskWeight: event.target.value }))} className="bg-surface-2 border-border text-white" />
           </div>
         </div>
+        {form.geometryMode === 'polygon' ? (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setForm((current) => ({ ...current, polygonPoints: current.polygonPoints.slice(0, -1) }))}>
+              Undo last point
+            </Button>
+            <Button variant="outline" onClick={() => setForm((current) => ({ ...current, polygonPoints: [] }))}>
+              Clear polygon
+            </Button>
+          </div>
+        ) : null}
         <Button onClick={createZone} isLoading={saving}>Create zone</Button>
       </div>
 
@@ -421,6 +518,7 @@ function ZonesTab() {
               <tr className="border-b border-border text-left text-xs uppercase tracking-[0.2em] text-gray-500">
                 <th className="px-5 py-3">Zone</th>
                 <th className="px-5 py-3">Type</th>
+                <th className="px-5 py-3">Geometry</th>
                 <th className="px-5 py-3">Radius</th>
                 <th className="px-5 py-3">Risk weight</th>
               </tr>
@@ -430,6 +528,7 @@ function ZonesTab() {
                 <tr key={zone.id} className="border-b border-border/50">
                   <td className="px-5 py-3 text-sm text-white">{zone.name}</td>
                   <td className="px-5 py-3 text-sm text-gray-300">{zone.type}</td>
+                  <td className="px-5 py-3 text-sm text-gray-300">{zone.geometry?.type === 'polygon' ? 'polygon' : 'circle'}</td>
                   <td className="px-5 py-3 text-sm text-gray-300">{zone.radiusMeters}m</td>
                   <td className="px-5 py-3 text-sm text-gray-300">{zone.riskWeight}</td>
                 </tr>
@@ -510,7 +609,7 @@ function ReviewQueueTab() {
 
             <div className="rounded-xl border border-border bg-surface-2/70 p-4 space-y-3">
               <p className="text-sm font-medium text-white">AI summary</p>
-              <p className="text-sm text-gray-300">{item.attendanceVerification?.aiSummary || 'Rule-based risk summary only for now.'}</p>
+              <p className="text-sm text-gray-300">{item.aiRiskSummary || item.attendanceVerification?.aiSummary || 'Rule-based risk summary only for now.'}</p>
             </div>
           </div>
 

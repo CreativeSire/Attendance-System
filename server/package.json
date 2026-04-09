@@ -11,6 +11,7 @@
     "db:push": "prisma db push",
     "db:seed": "ts-node prisma/seed.ts",
     "db:studio": "prisma studio",
+    "db:sync-verification": "ts-node scripts/sync-verification-schema.ts",
     "db:backup": "ts-node scripts/export-db-backup.ts",
     "db:seed-snapshot": "ts-node scripts/export-seed-snapshot.ts",
     "smoke:test": "ts-node scripts/smoke-test.ts",

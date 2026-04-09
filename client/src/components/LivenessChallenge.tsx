@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Mic, MicOff, RotateCcw, ShieldCheck, Sparkles, Volume2 } from 'lucide-react';
+import Webcam from 'react-webcam';
+import { Camera, Mic, MicOff, RotateCcw, ShieldCheck, Sparkles, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { LivenessResponse, VerificationPrompt } from '@/types';
+import {
+  ensureFaceModels,
+  evaluateBlinkSequence,
+  evaluateNod,
+  evaluateTurn,
+  measureVideoFrame,
+} from '@/lib/face-verification';
 
 type SpeechRecognitionCtor = new () => {
   lang: string;
@@ -27,12 +35,20 @@ interface LivenessChallengeProps {
   onComplete: (responses: LivenessResponse[]) => void;
 }
 
+type MetricsPoint = { eyeAspectRatio?: number; yawRatio?: number; nodOffset?: number };
+
+const WINDOW_SIZE = 18;
+
 export default function LivenessChallenge({ prompts, onComplete }: LivenessChallengeProps) {
+  const webcamRef = useRef<Webcam>(null);
+  const recognitionRef = useRef<InstanceType<SpeechRecognitionCtor> | null>(null);
   const [responses, setResponses] = useState<Record<string, LivenessResponse>>({});
   const [spokenDigits, setSpokenDigits] = useState('');
   const [speechListening, setSpeechListening] = useState(false);
   const [speechSupported] = useState(Boolean(getSpeechRecognition()));
-  const recognitionRef = useRef<InstanceType<SpeechRecognitionCtor> | null>(null);
+  const [frameError, setFrameError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [metricsHistory, setMetricsHistory] = useState<MetricsPoint[]>([]);
 
   const voicePrompt = useMemo(
     () => prompts.find((prompt) => prompt.type === 'say_digits'),
@@ -40,34 +56,109 @@ export default function LivenessChallenge({ prompts, onComplete }: LivenessChall
   );
 
   useEffect(() => {
+    let active = true;
+    let timer: number | null = null;
+
+    const loop = async () => {
+      if (!active || !cameraReady || !webcamRef.current?.video) {
+        timer = window.setTimeout(loop, 450);
+        return;
+      }
+
+      try {
+        await ensureFaceModels();
+        const measurement = await measureVideoFrame(webcamRef.current.video as HTMLVideoElement);
+        if (measurement?.challengeMetrics) {
+          setFrameError(null);
+          setMetricsHistory((current) => [...current, measurement.challengeMetrics].slice(-WINDOW_SIZE));
+        }
+      } catch {
+        setFrameError('Unable to analyze the live camera feed for liveness right now.');
+      }
+
+      timer = window.setTimeout(loop, 450);
+    };
+
+    timer = window.setTimeout(loop, 300);
+
     return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
       recognitionRef.current?.stop();
     };
-  }, []);
+  }, [cameraReady]);
 
-  const markPassed = (prompt: VerificationPrompt) => {
+  useEffect(() => {
+    prompts.forEach((prompt) => {
+      if (responses[prompt.type]?.passed) return;
+
+      if (prompt.type === 'blink_twice' && evaluateBlinkSequence(metricsHistory)) {
+        setResponses((current) => ({
+          ...current,
+          blink_twice: {
+            type: 'blink_twice',
+            passed: true,
+            confidence: 0.9,
+            metrics: { blinkWindow: metricsHistory },
+          },
+        }));
+      }
+
+      if (prompt.type === 'turn_left' && evaluateTurn(metricsHistory, 'left')) {
+        setResponses((current) => ({
+          ...current,
+          turn_left: {
+            type: 'turn_left',
+            passed: true,
+            confidence: 0.87,
+            metrics: { yawWindow: metricsHistory },
+          },
+        }));
+      }
+
+      if (prompt.type === 'turn_right' && evaluateTurn(metricsHistory, 'right')) {
+        setResponses((current) => ({
+          ...current,
+          turn_right: {
+            type: 'turn_right',
+            passed: true,
+            confidence: 0.87,
+            metrics: { yawWindow: metricsHistory },
+          },
+        }));
+      }
+
+      if (prompt.type === 'nod_slowly' && evaluateNod(metricsHistory)) {
+        setResponses((current) => ({
+          ...current,
+          nod_slowly: {
+            type: 'nod_slowly',
+            passed: true,
+            confidence: 0.86,
+            metrics: { nodWindow: metricsHistory },
+          },
+        }));
+      }
+    });
+  }, [metricsHistory, prompts, responses]);
+
+  useEffect(() => {
+    if (!voicePrompt || !spokenDigits.trim()) return;
+    const promptDigits = voicePrompt.prompt.replace(/\D/g, '');
+    if (!promptDigits) return;
+
+    const passed = spokenDigits.includes(promptDigits);
     setResponses((current) => ({
       ...current,
-      [prompt.type]: {
-        type: prompt.type,
-        passed: true,
-        confidence: prompt.type === 'say_digits' ? 0.72 : 0.88,
-        spokenDigits: prompt.type === 'say_digits' ? spokenDigits : undefined,
+      say_digits: {
+        type: 'say_digits',
+        passed,
+        confidence: passed ? 0.84 : 0.35,
+        spokenDigits,
+        metrics: { expectedDigits: promptDigits, heardDigits: spokenDigits },
       },
     }));
-  };
-
-  const markRetry = (prompt: VerificationPrompt) => {
-    setResponses((current) => ({
-      ...current,
-      [prompt.type]: {
-        type: prompt.type,
-        passed: false,
-        confidence: 0.35,
-        spokenDigits: prompt.type === 'say_digits' ? spokenDigits : undefined,
-      },
-    }));
-  };
+  }, [spokenDigits, voicePrompt]);
 
   const startVoiceCapture = () => {
     const Recognition = getSpeechRecognition();
@@ -85,31 +176,73 @@ export default function LivenessChallenge({ prompts, onComplete }: LivenessChall
         .replace(/\D/g, '');
       setSpokenDigits(transcript);
     };
-    recognition.onerror = () => {
-      setSpeechListening(false);
-    };
-    recognition.onend = () => {
-      setSpeechListening(false);
-    };
+    recognition.onerror = () => setSpeechListening(false);
+    recognition.onend = () => setSpeechListening(false);
 
     recognitionRef.current = recognition;
     setSpeechListening(true);
     recognition.start();
   };
 
-  const completedCount = Object.values(responses).filter((response) => response.passed).length;
-  const allPromptsHandled = prompts.every((prompt) => responses[prompt.type]);
+  const resetPrompt = (prompt: VerificationPrompt) => {
+    setResponses((current) => {
+      const next = { ...current };
+      delete next[prompt.type];
+      return next;
+    });
+
+    if (prompt.type === 'say_digits') {
+      setSpokenDigits('');
+    }
+    setMetricsHistory([]);
+  };
+
+  const allPromptsHandled = prompts.every((prompt) => responses[prompt.type]?.passed);
+  const completedCount = prompts.filter((prompt) => responses[prompt.type]?.passed).length;
 
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-border bg-surface-2/80 p-5">
         <div className="flex items-center gap-2 text-accent">
           <Sparkles size={16} />
-          <span className="text-sm font-medium">Randomized liveness challenge</span>
+          <span className="text-sm font-medium">Measured liveness challenge</span>
         </div>
         <p className="mt-2 text-sm text-gray-400">
-          Complete {prompts.length === 1 ? 'this challenge' : 'these challenges'} live so the system can confirm it is really you.
+          Keep your face in frame. The system watches real eye, head, and motion cues instead of asking you to simply confirm that you did them.
         </p>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-surface p-5 space-y-4">
+        <div className="relative mx-auto h-72 max-w-sm overflow-hidden rounded-2xl border border-border bg-background">
+          <Webcam
+            ref={webcamRef}
+            audio={Boolean(voicePrompt)}
+            mirrored
+            className="h-full w-full object-cover"
+            screenshotFormat="image/jpeg"
+            videoConstraints={{ facingMode: 'user', width: 640, height: 480 }}
+            onUserMedia={() => setCameraReady(true)}
+            onUserMediaError={() => setFrameError('Camera access failed during the liveness step.')}
+          />
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div className="h-52 w-40 rounded-[999px] border-2 border-accent/70" />
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-xl border border-border bg-background/40 p-4 text-sm text-gray-300">
+            <div className="flex items-center gap-2 text-white"><Camera size={14} /> Camera</div>
+            <p className="mt-2">{cameraReady ? 'Live feed connected.' : 'Waiting for camera permission.'}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-background/40 p-4 text-sm text-gray-300">
+            <div className="flex items-center gap-2 text-white"><ShieldCheck size={14} /> Progress</div>
+            <p className="mt-2">{completedCount} of {prompts.length} challenge{prompts.length === 1 ? '' : 's'} completed.</p>
+          </div>
+          <div className="rounded-xl border border-border bg-background/40 p-4 text-sm text-gray-300">
+            <div className="flex items-center gap-2 text-white"><Sparkles size={14} /> Frame analysis</div>
+            <p className="mt-2">{frameError ? frameError : 'Landmarks and movement cues are being tracked live.'}</p>
+          </div>
+        </div>
       </div>
 
       {prompts.map((prompt, index) => {
@@ -124,7 +257,7 @@ export default function LivenessChallenge({ prompts, onComplete }: LivenessChall
               {response?.passed ? (
                 <div className="inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1 text-xs font-medium text-success">
                   <ShieldCheck size={13} />
-                  Completed
+                  Detected
                 </div>
               ) : null}
             </div>
@@ -151,26 +284,20 @@ export default function LivenessChallenge({ prompts, onComplete }: LivenessChall
                     {speechListening ? <MicOff size={14} /> : <Mic size={14} />}
                     {speechSupported ? (speechListening ? 'Listening...' : 'Use microphone') : 'Microphone unsupported'}
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => setSpokenDigits('')}>
-                    <RotateCcw size={14} />
-                    Clear
-                  </Button>
                 </div>
               </div>
             ) : (
               <div className="rounded-xl border border-border bg-background/50 p-4 text-sm text-gray-400">
-                Perform the action now, keep your face inside the frame, then confirm below once you have done it cleanly.
+                Keep your face in the guide and perform the action once. The app will auto-detect it and mark the challenge complete.
               </div>
             )}
 
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" onClick={() => markPassed(prompt)}>
-                I completed this
+            {!response?.passed ? (
+              <Button type="button" variant="outline" onClick={() => resetPrompt(prompt)}>
+                <RotateCcw size={14} />
+                Reset challenge
               </Button>
-              <Button type="button" variant="outline" onClick={() => markRetry(prompt)}>
-                Retry challenge
-              </Button>
-            </div>
+            ) : null}
           </div>
         );
       })}
@@ -184,20 +311,13 @@ export default function LivenessChallenge({ prompts, onComplete }: LivenessChall
           <Button
             type="button"
             size="lg"
-            disabled={!allPromptsHandled || prompts.some((prompt) => !responses[prompt.type]?.passed)}
+            disabled={!allPromptsHandled}
             onClick={() => onComplete(prompts.map((prompt) => responses[prompt.type]).filter(Boolean))}
           >
             Continue verification
           </Button>
         </div>
       </div>
-
-      {voicePrompt && !speechSupported ? (
-        <p className="text-xs text-warning">
-          Voice capture is not supported by this browser, so manual spoken-digit confirmation is being used for this attempt.
-        </p>
-      ) : null}
     </div>
   );
 }
-

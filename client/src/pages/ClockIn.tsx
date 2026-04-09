@@ -22,6 +22,7 @@ import LivenessChallenge from '@/components/LivenessChallenge';
 import QRScanner from '@/components/QRScanner';
 import { Button } from '@/components/ui/button';
 import type { AttendanceRecord, LivenessResponse, VerificationSession } from '@/types';
+import { analyzeFaceImage, ensureFaceModels } from '@/lib/face-verification';
 import { formatTime } from '@/lib/utils';
 
 type ActiveTab = 'clock-in' | 'clock-out';
@@ -82,6 +83,7 @@ export default function ClockIn() {
   const [step, setStep] = useState<ClockInStep>('pin');
   const [pin, setPin] = useState('');
   const [facePhoto, setFacePhoto] = useState('');
+  const [faceAnalysis, setFaceAnalysis] = useState<{ descriptor: number[]; qualityScore: number; detectionScore: number; eyeAspectRatio: number; box: Record<string, unknown>; landmarks: Record<string, unknown> } | null>(null);
   const [verificationSession, setVerificationSession] = useState<VerificationSession | null>(null);
   const [verificationResult, setVerificationResult] = useState<AttendanceRecord | null>(null);
   const [startSubmitting, setStartSubmitting] = useState(false);
@@ -93,6 +95,7 @@ export default function ClockIn() {
   const [location, setLocation] = useState<{ lat?: number; lng?: number; accuracy?: number; denied?: boolean }>({});
   const [showLegacyQr, setShowLegacyQr] = useState(false);
   const [legacyQrToken, setLegacyQrToken] = useState('');
+  const [faceAnalyzing, setFaceAnalyzing] = useState(false);
 
   const currentStepIndex = determineStepIndex(step);
   const isLate = useMemo(() => {
@@ -200,6 +203,14 @@ export default function ClockIn() {
       const res = await attendanceApi.completeVerification({
         sessionId: verificationSession.sessionId,
         facePhoto,
+        faceDescriptor: faceAnalysis?.descriptor,
+        faceCaptureMetrics: faceAnalysis ? {
+          qualityScore: faceAnalysis.qualityScore,
+          detectionScore: faceAnalysis.detectionScore,
+          eyeAspectRatio: faceAnalysis.eyeAspectRatio,
+          box: faceAnalysis.box,
+          landmarks: faceAnalysis.landmarks,
+        } : undefined,
         lateReason: isLate ? lateReason : undefined,
         mood: mood || undefined,
         livenessResponses: responses,
@@ -218,6 +229,37 @@ export default function ClockIn() {
       toast.error(error instanceof Error ? error.message : 'Verification could not be completed.');
     } finally {
       setCompleteSubmitting(false);
+    }
+  };
+
+  const handleContinueToLiveness = async () => {
+    if (!facePhoto) {
+      toast.error('Capture your face first.');
+      return;
+    }
+
+    setFaceAnalyzing(true);
+    try {
+      await ensureFaceModels();
+      const analysis = await analyzeFaceImage(facePhoto);
+      if (!analysis) {
+        toast.error('No usable face was detected. Please capture a clearer image in better lighting.');
+        return;
+      }
+
+      setFaceAnalysis({
+        descriptor: analysis.descriptor,
+        qualityScore: analysis.qualityScore,
+        detectionScore: analysis.detectionScore,
+        eyeAspectRatio: analysis.eyeAspectRatio,
+        box: analysis.box,
+        landmarks: analysis.landmarks,
+      });
+      setStep('liveness');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Face analysis failed.');
+    } finally {
+      setFaceAnalyzing(false);
     }
   };
 
@@ -490,7 +532,10 @@ export default function ClockIn() {
                       ) : null}
                       <FaceCapture
                         instruction="Capture a clean face image before using the legacy QR fallback."
-                        onCapture={(photo) => setFacePhoto(photo)}
+                        onCapture={(photo) => {
+                          setFacePhoto(photo);
+                          setFaceAnalysis(null);
+                        }}
                       />
                       <Button size="lg" variant="outline" className="w-full" isLoading={completeSubmitting} onClick={handleLegacyClockIn}>
                         Complete legacy QR clock-in
@@ -513,17 +558,20 @@ export default function ClockIn() {
                 <div className="rounded-2xl border border-border bg-surface-2/80 p-5">
                   <FaceCapture
                     instruction="Center your face inside the guide, hold still, and capture a clear image."
-                    onCapture={(photo) => setFacePhoto(photo)}
+                    onCapture={(photo) => {
+                      setFacePhoto(photo);
+                      setFaceAnalysis(null);
+                    }}
                   />
                 </div>
 
                 {facePhoto ? (
                   <div className="rounded-xl border border-success/20 bg-success/10 p-4 text-sm text-gray-200">
-                    Face image captured. Continue to the randomized liveness challenge.
+                    Face image captured. The system will extract a real facial descriptor before moving to the liveness stage.
                   </div>
                 ) : null}
 
-                <Button size="lg" className="w-full" disabled={!facePhoto} onClick={() => setStep('liveness')}>
+                <Button size="lg" className="w-full" disabled={!facePhoto} isLoading={faceAnalyzing} onClick={handleContinueToLiveness}>
                   Continue to liveness
                 </Button>
               </div>
@@ -631,4 +679,3 @@ export default function ClockIn() {
     </div>
   );
 }
-
