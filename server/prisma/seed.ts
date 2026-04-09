@@ -22,7 +22,18 @@ async function main() {
   // Upsert users
   const admin = await prisma.user.upsert({
     where: { email: 'admin@dala.com' },
-    update: {},
+    update: {
+      name: 'Admin User',
+      password: await hash('admin123'),
+      role: 'admin',
+      employeeId: 'EMP001',
+      position: 'System Administrator',
+      department: 'Management',
+      hourlyRate: 5000,
+      basicSalary: 800000,
+      pinHash: await hashPin('1111'),
+      isActive: true,
+    },
     create: {
       name: 'Admin User', email: 'admin@dala.com',
       password: await hash('admin123'), role: 'admin',
@@ -34,7 +45,18 @@ async function main() {
 
   const manager = await prisma.user.upsert({
     where: { email: 'sarah@dala.com' },
-    update: {},
+    update: {
+      name: 'Sarah Manager',
+      password: await hash('password123'),
+      role: 'manager',
+      employeeId: 'EMP002',
+      position: 'Operations Manager',
+      department: 'Operations',
+      hourlyRate: 2500,
+      basicSalary: 400000,
+      pinHash: await hashPin('2222'),
+      isActive: true,
+    },
     create: {
       name: 'Sarah Manager', email: 'sarah@dala.com',
       password: await hash('password123'), role: 'manager',
@@ -46,7 +68,18 @@ async function main() {
 
   const amaka = await prisma.user.upsert({
     where: { email: 'amaka@dala.com' },
-    update: {},
+    update: {
+      name: 'Amaka Obi',
+      password: await hash('password123'),
+      role: 'employee',
+      employeeId: 'EMP003',
+      position: 'Software Engineer',
+      department: 'Engineering',
+      hourlyRate: 1875,
+      basicSalary: 300000,
+      pinHash: await hashPin('3333'),
+      isActive: true,
+    },
     create: {
       name: 'Amaka Obi', email: 'amaka@dala.com',
       password: await hash('password123'), role: 'employee',
@@ -58,7 +91,18 @@ async function main() {
 
   const chidi = await prisma.user.upsert({
     where: { email: 'chidi@dala.com' },
-    update: {},
+    update: {
+      name: 'Chidi Eze',
+      password: await hash('password123'),
+      role: 'employee',
+      employeeId: 'EMP004',
+      position: 'Sales Executive',
+      department: 'Sales',
+      hourlyRate: 1562,
+      basicSalary: 250000,
+      pinHash: await hashPin('4444'),
+      isActive: true,
+    },
     create: {
       name: 'Chidi Eze', email: 'chidi@dala.com',
       password: await hash('password123'), role: 'employee',
@@ -70,7 +114,18 @@ async function main() {
 
   const fatima = await prisma.user.upsert({
     where: { email: 'fatima@dala.com' },
-    update: {},
+    update: {
+      name: 'Fatima Yusuf',
+      password: await hash('password123'),
+      role: 'employee',
+      employeeId: 'EMP005',
+      position: 'Marketing Analyst',
+      department: 'Marketing',
+      hourlyRate: 1562,
+      basicSalary: 250000,
+      pinHash: await hashPin('5555'),
+      isActive: true,
+    },
     create: {
       name: 'Fatima Yusuf', email: 'fatima@dala.com',
       password: await hash('password123'), role: 'employee',
@@ -109,7 +164,17 @@ async function main() {
 
   await prisma.appConfig.upsert({
     where: { id: 'default' },
-    update: {},
+    update: {
+      defaultOfficeId: office.id,
+      workStartTime: '09:00',
+      gracePeriodMinutes: 10,
+      qrExpirySeconds: 180,
+      requireLocation: true,
+      requireFaceCapture: true,
+      requireLiveness: true,
+      requireEmployeePin: true,
+      latePenaltyMode: 'track_only',
+    },
     create: {
       id: 'default',
       defaultOfficeId: office.id,
